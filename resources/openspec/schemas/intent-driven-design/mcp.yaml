@@ -1,0 +1,10 @@
+version: 1
+servers:
+  - name: inspo
+    url: https://inspomcp.dev/api/mcp
+    readOnly: true
+    auth: none
+  - name: ui-skills
+    url: https://www.ui-skills.com/mcp
+    readOnly: true
+    auth: none

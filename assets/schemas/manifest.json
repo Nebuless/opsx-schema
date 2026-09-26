@@ -1,0 +1,379 @@
+{
+  "formatVersion": 1,
+  "source": {
+    "package": "@nebulesstech/openspec-schemas",
+    "version": "1.8.1",
+    "repository": "https://github.com/Nebuless/openspec-schemas",
+    "revision": "2c1740206a4d1729b0285b07a5e79c181b12bf89",
+    "license": "MIT",
+    "licenseFile": "LICENSE",
+    "licenseSha256": "1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685"
+  },
+  "schemas": {
+    "behaviour-driven": {
+      "digest": "802643e6013b2764bf7653433352cd8d3578f162a1911da49abd75b0d1bca49f",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "579aff0eed7b28c9bb2ffdf390e3699bfd3c7c9fef333bb3ecf75f4dce426f60"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "c14411994e548fdf1bc8bf8bcc6752ee712c71ba9a539b5e3577cdcdd4494768"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "f2863a1ff293f01115b9a6af0531213bd9709bbab9323ce125277e9d3b57ae1d"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "3251f08057d142f6e3c26f65f5f100ab602ee7ce880d5503bfaa45668ba19f59"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "18dfe599980b46bda5a34771e6bd4f063c0c82a2e280738558e1c641af4c6c2e"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "dd7f2b7df3449528df7f66eb47783121861708d21566c91530952e276cdb60c0"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "b2a6a4c08c15f347a1d8c3e2d43e0c8fb066dc5cc0feb795f47555f176f9c421"
+        }
+      ]
+    },
+    "compound-intent-driven": {
+      "digest": "d25477a5c302ebfbd9202458ecc5c8d0c4c379a9be3e0332e516dfb5071645a1",
+      "files": [
+        {
+          "path": "adapters/shared/opsx-ce-bulk-continue.md",
+          "sha256": "f6e2551679feea927c27dcb9ed31dd969b9ca91fbfda6304da6178b33f59cde4"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-compound.md",
+          "sha256": "d6fda3d0680b998903c5226507c9ac828c600777ad7921d1cd9c33479982a3d2"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-continue.md",
+          "sha256": "469bff275a68a12f60f74bcc64e361bc77415738ba24e8abcfed1ff589dc714f"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-debug.md",
+          "sha256": "7e3325961363eec8df1882a0875aa9889c620146b8a3830e95ccbd42020d1644"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-define.md",
+          "sha256": "fe8f183cfa482ecabed991d990ccd9982135b30cfdd3038b72941494e0b00664"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-plan.md",
+          "sha256": "2456f95b50f1dc5af05e9fc1881680389031f954bea2940ee717c19dc24600b6"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-review.md",
+          "sha256": "93581aeade542e8ee89fa70b9a8733c7ee3037083a84182e773853c747b9fb35"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-validate.md",
+          "sha256": "ee9dc70e4475bfcabba48d5fd1f1ed5dd29c1641f7644f92b4e17fa114ab27fb"
+        },
+        {
+          "path": "adapters/shared/opsx-ce-work.md",
+          "sha256": "9e4129acef5c43331cfb8e718140b1cd78a43c33db7e5b954f862c372b3e07c0"
+        },
+        {
+          "path": "README.md",
+          "sha256": "6bce1083ee4c91de4f3d261271f87eed0a70a4714fee937627f2bf33a1110055"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "6d4112b5e6cfde204ddf9ae40d17f9e135b935c8983eed2c3415597876373149"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "92b4aebabdfd1fa206317502b8dc0c07746703d84f13900d5044f30a4c2639f3"
+        },
+        {
+          "path": "templates/adr.md",
+          "sha256": "ddf85e13bcf36ea4e210ab120519067f2eb582da577577fa81fccc6a191296d5"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "13ff715255a5841b868c622981f13444d0c459814f11a36808560cc0b350d388"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "92776af0d966801dca84743311658351062236f5b8c4e262c4a6819647d8a67e"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "18a3c3157bbea8a1c2b2954e5ee873b320ddcb088676e744dd515078a1e55655"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "f8c42f61e35566631db0b05ae1bc6b84dc151193cd75fdad1666adbfd6f5c3d9"
+        }
+      ]
+    },
+    "event-driven": {
+      "digest": "6223c6b7d8bd5ec4d43238d9eb23aa4b818ce0c7ed94db7f35c86ef93f914fb5",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "d970259643f63f35ecff48e2ea0c3342861f868433695282b75dfa24f3a6e954"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "945d1be47c912f747d9149265b3dc3bdbd30a850376ae0cd4b860981e422c07b"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "9e0fc54bdbf403201220bdc6344d4780edf39acba0a5c9f78b5d7e38e47fd178"
+        },
+        {
+          "path": "templates/asyncapi.yaml",
+          "sha256": "d3b62aec78e2d79d5dae15e0c9937988cce0f84bea057c500f1d441f662ee979"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "e78a2bedcdececde5d1cb78278db5d91fb7a8ef377e4ce2e2ab2c3ec0c423f90"
+        },
+        {
+          "path": "templates/event-modeling.md",
+          "sha256": "f5935fce0ac1f622dc61dc8419f504ffd9f19d46e39cbff0ab5b2c2c54b122b7"
+        },
+        {
+          "path": "templates/event-storming.md",
+          "sha256": "ccb529b3b32e8bba9411f2905182c6edb0c2001ff67a133572a4e3c6da498c99"
+        },
+        {
+          "path": "templates/specs/spec.md",
+          "sha256": "5a9e3546600206e6071a69977de01a5126aeb0c105c400416592400b6f1516d3"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "cb681bd9927d6b177a32d85769365c30ce5e0f7f8eb9ddf74ce81b7017df5d7f"
+        }
+      ]
+    },
+    "intent-driven": {
+      "digest": "f4fdbd2c742fe0e7b4486811d1a58c74fb47dd4586f2586828a0a6245d4d613b",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "e6a09098a287f20f066ad20bd4e29e4f45cf3e2d06d6b15ce386fe5408db83ea"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "1de1b5dd53a5baddf177e435a256fb38a2056dc5b53b3d134d5f0f4d59e6d788"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "d58d0caae9e507d4524bb3e7eeb94abb5bac6787813699f0e96a51eb376989dd"
+        },
+        {
+          "path": "templates/adr.md",
+          "sha256": "bdd02775b926c75631d7df10801ed144c693e9e82197418e13c481747f6bfc51"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "ac3fff66587ef35997393043b926259fccf1100fa4ef78370134a45f5fc73faf"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "18dfe599980b46bda5a34771e6bd4f063c0c82a2e280738558e1c641af4c6c2e"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "dd7f2b7df3449528df7f66eb47783121861708d21566c91530952e276cdb60c0"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "b2a6a4c08c15f347a1d8c3e2d43e0c8fb066dc5cc0feb795f47555f176f9c421"
+        }
+      ]
+    },
+    "intent-driven-design": {
+      "digest": "af3c600af0815002f67b786ad5636edf75037e61f334572eb88fe224d2b2f953",
+      "files": [
+        {
+          "path": "mcp.yaml",
+          "sha256": "bd630d531c6e8ab4483e0ee72d34017317c32f12099b65937afea1046c0ba393"
+        },
+        {
+          "path": "README.md",
+          "sha256": "099d4a267861bb012f3afdc492db711fce12ac8d22ac5ec5418befc94cba3b8c"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "abd65febd47665a8b38893c412a0354aaa1da4e4a8aac391f50eeceedf89d495"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "ca397f8640d0e6bf9fdf25c965b744e83cc3c0928cbee572d1823b847b1ac033"
+        },
+        {
+          "path": "templates/adr.md",
+          "sha256": "000209cc578d6bd122681e6513c5e8f316dd6ba84dec1bf8d6e0c752e1033774"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "242b5e77d91a667a8dd499a97675d05c57ed8b0b02ab24d49c639a9f242e957f"
+        },
+        {
+          "path": "templates/journey.md",
+          "sha256": "6ea4acd8c8c37d48ac4ca40b702e6b704111da7e7a8e4e41d0d64cba8f6c7f61"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "1fcd61a1d6eaf39b0eafc425dfd870872ed053ad9725f852f7e71fe58aa49eb2"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "1d4d966fce41c75975260c7fbc4637702e66ad69f8f142e66d10bc049cd50a66"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "29955528eee8a0ca3fbf1703b2bc2229746f2b00f3b3bf13c8c17664db4394b2"
+        }
+      ]
+    },
+    "intent-driven-engineering": {
+      "digest": "0f20756a95a216fcd25873b305bfeb0782c942b2109dee5ba49d71679a4184dd",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "2c71d9453b194ff2bb43af139127a5bb57c6e0d3ecdcf8132d43f0daed3bea41"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "bf426c07e2c49f2a6322ecdd7dc36c79bf75c66c67bfa34a63a3abbca44562b1"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "4714a1bc11c116dd17b22bd483abc84ed27539a1ace9b85b1e7109accdb697ea"
+        },
+        {
+          "path": "templates/adr.md",
+          "sha256": "bdd02775b926c75631d7df10801ed144c693e9e82197418e13c481747f6bfc51"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "e3dc23cecf55a990e846e0f879162a92b021efd3b689e51ad2cf8096666943c6"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "91397c341ee1bfbbd7a9b32ebc7c1fd6dc7715f1fead0eae0e42de5da789ccfe"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "dd7f2b7df3449528df7f66eb47783121861708d21566c91530952e276cdb60c0"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "b75a8fea7662189cd2eae6f932b577ddfe827e5f4d1ae70ac9e71242e2d64125"
+        }
+      ]
+    },
+    "intent-driven-superpowers": {
+      "digest": "fd02f4387c9fe25c6567e94d8741477346d5066fd1b8a967402b4001e1f60150",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "3f2fb044b6a951fa5d8f9e183187b4ef84fd88843faa9b18f1984cc246faa388"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "e97099ad6ec0fab0bafaf6d8ef5355b2f5d4447fe8c269a8f7c948f4d6e5afee"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "d53d6f471dfaeadfd70cbcc0944f9130d15105841605989a8ad9b908dc9d9d77"
+        },
+        {
+          "path": "templates/adr.md",
+          "sha256": "bdd02775b926c75631d7df10801ed144c693e9e82197418e13c481747f6bfc51"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "ac3fff66587ef35997393043b926259fccf1100fa4ef78370134a45f5fc73faf"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "18dfe599980b46bda5a34771e6bd4f063c0c82a2e280738558e1c641af4c6c2e"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "dd7f2b7df3449528df7f66eb47783121861708d21566c91530952e276cdb60c0"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "b2a6a4c08c15f347a1d8c3e2d43e0c8fb066dc5cc0feb795f47555f176f9c421"
+        }
+      ]
+    },
+    "minimalist": {
+      "digest": "2e703074385ae1460c7848f1aa032b6a832e86ac0147338f77673d17c983b8ba",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "f11e1e2bb1b615a8c506502cd3cb135695afa39d1f7f9cc7ce03ef6607ddcb54"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "1ff1f0a3d3b9a8eac0f414f60ef95ca99eee578d174ceaf9fdbe084cd4e93082"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "e5cdafe56d92c5c14c2a6e79e9490ffe4c75f67dd4ebd52df1da91313432eea5"
+        },
+        {
+          "path": "templates/specs/spec.md",
+          "sha256": "5a9e3546600206e6071a69977de01a5126aeb0c105c400416592400b6f1516d3"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "5711fe32f6f2a9a44df781fe05f08531c11ceb7c2171e2bb63ba92c9dcc6907b"
+        }
+      ]
+    },
+    "spec-driven-with-adr": {
+      "digest": "80b3e662a3a87aea4334126a9f60a3dc8eada02561ef9d25c830dd1f534c7e05",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "bd89b9e64281d331fe799a759462afa45cc8312cb08b24cbe67b1daa459867f4"
+        },
+        {
+          "path": "schema.yaml",
+          "sha256": "3417dffd1555c5cc8e2b79aed27bc0cb78a1b43f1184bb3be8e770084e748604"
+        },
+        {
+          "path": "skills.txt",
+          "sha256": "df1089f54a11d8541bd37942df58b12f6b6130de163b566c166c47250e92e4bd"
+        },
+        {
+          "path": "templates/adr.md",
+          "sha256": "121d39dccc6bad2b210e990bacad3825284ecf2a63037439452932536c9b03db"
+        },
+        {
+          "path": "templates/design.md",
+          "sha256": "3251f08057d142f6e3c26f65f5f100ab602ee7ce880d5503bfaa45668ba19f59"
+        },
+        {
+          "path": "templates/proposal.md",
+          "sha256": "9c554e0dbe918e3dc745dcc143a999e1d102954d75fb6e51e231c4cba78f06f3"
+        },
+        {
+          "path": "templates/spec.md",
+          "sha256": "e025078f238dc6e4df552a1e0a140cf9efce0bbdecbeb9f45837d45ed91dca01"
+        },
+        {
+          "path": "templates/tasks.md",
+          "sha256": "b2a6a4c08c15f347a1d8c3e2d43e0c8fb066dc5cc0feb795f47555f176f9c421"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+---
+description: Bulk continue explicit OpenSpec changes
+---
+# Bulk Continue Explicit OpenSpec Changes
+
+OpenSpec CLI JSON is lifecycle authority. Require at least two explicitly selected active changes; each explicit change must be active. Never infer an unambiguous existing change or operate on implicit all changes. Preflight each candidate independently with fresh `openspec status --change "<change>" --json`, `openspec instructions <artifact> --change "<change>" --json` as needed, and preserved named-store routing. Honor `planningHome`, `changeRoot`, `artifactPaths`, `resolvedOutputPath`, `existingOutputPaths`, `actionContext`, and `contextFiles`. Compute each candidate's actual authorized mutation paths, test paths, main-spec target, artifact/task, batch, worker, and dependency layer before dispatch.
+
+After status, reject any schemaName other than `compound-intent-driven`. Read every concrete dependency path and contextFiles; reuse settled artifacts instead of re-asking plan/work scope. No parallel CE plans/trackers, commits, branches, pushes, issues, PRs, automatic stage selection/advance.
+
+Each selected operation writes only its owned CLI-authorized mutation paths. Refresh `openspec status --change "<change>" --json` after each mutation and before returning.
+
+For each candidate select one deterministic operation only. Planning artifact order is stable: `specs`, `design`, `adr`, `tasks`. Safe concurrency requires disjoint mutation paths, disjoint test paths, and disjoint main-spec targets, and excludes sync, archive, blocked, stale, no-op, unknown, and candidates whose operation owns task batches. Run only safe disjoint non-sync/non-archive single-operation candidates concurrently. Serialize every overlap, sync/archive operation, blocked candidate, and task-batch owner in stable explicit-selection order. Preserve result packets from successes and failures; one failure does not erase other packets.
+
+Use `/opsx-ce-plan` for one ready planning artifact, `/opsx-ce-define` for ready proposal, `/opsx-ce-work` only for dependency-ready implementation, then review, later validate, compound, or `openspec-sync-specs`. Require concrete non-empty capability specs; never count a directory as completion. Archive requires direct user consent and never dispatches otherwise. Stop on blockers, no-op, stale state, unknown selection, missing metadata, or conflicting claims. Never create CE plans, trackers, queues, commits, branches, worktrees, pushes, issues, PRs, or automatic archive.
+
+Return one universal result packet per candidate and aggregate packet with exact fields: Outcome; Change/Schema/Artifact-or-task/Batch/Worker/Dependency layer; Proof; Mutations; OpenSpec state; Continuation; Blocker; Next command (one exact command, not executed). Report mutations and blocker honestly. Include selected change/schema and refreshed CLI metadata. Preserve named-store routing. Never guess paths or operate on implicit all changes.

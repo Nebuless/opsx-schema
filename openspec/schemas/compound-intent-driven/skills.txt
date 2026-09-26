@@ -1,0 +1,8 @@
+# Compound Engineering core-loop skills. Source-qualified lines copy complete
+# skill directories into .agents/skills/ via scripts/install-schema-skills.sh.
+EveryInc/compound-engineering-plugin	skills/ce-brainstorm
+EveryInc/compound-engineering-plugin	skills/ce-plan
+EveryInc/compound-engineering-plugin	skills/ce-work
+EveryInc/compound-engineering-plugin	skills/ce-simplify-code
+EveryInc/compound-engineering-plugin	skills/ce-code-review
+EveryInc/compound-engineering-plugin	skills/ce-compound

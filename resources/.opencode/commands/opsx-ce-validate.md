@@ -1,0 +1,18 @@
+---
+description: Validate named OpenSpec proofs
+---
+# Validate OpenSpec Proofs
+
+Use CLI artifactPaths, resolvedOutputPath, and changeRoot as layout authority. Read concrete existingOutputPaths and contextFiles, never guessed files. Required specs must contain non-empty <changeRoot>/specs/<capability>/spec.md files; an empty directory is not completion. Missing metadata blocks work.
+
+Resolve an explicit change or an unambiguous existing change from context or `openspec list --json`; otherwise stop for selection. Never create a change. Run `openspec status --change "<change>" --json`; reject any schemaName other than `compound-intent-driven`. Honor planningHome, changeRoot, and actionContext. For a named store, discover its id with `openspec store list --json` and retain `--store <id>` on change commands.
+
+Run `openspec instructions apply --change "<change>" --json`. Read every concrete dependency path or contextFiles entry, including proposal, specs, design, adr, and tasks. Stop if apply is blocked; all_done still requires evidence. Build a packet containing task IDs, instruction, settled decisions, named proofs, and allowed mutation paths. Preserve settled artifacts instead of re-asking plan/work scope.
+
+Run every named task proof and `openspec validate <change> --type change --strict`. If this schema was edited, also run `openspec schema validate compound-intent-driven`. Capture exact commands, exit results, and observed evidence; skipped or unavailable checks are blockers, never success. Verify checked tasks and absence of unresolved review findings before claiming completion. Run only local bounded checks; do not deploy, publish, or invoke destructive/external-side-effect proofs. Request a safe proof when needed. Do not fix code or edit artifacts/checkboxes here. No owned OpenSpec paths are writable in this read-only stage; only declared disposable local test output is allowed.
+
+OpenSpec overrides conflicting CE skill instructions. No parallel CE plans/trackers, commits, branches, pushes, issues, PRs, automatic stage selection/advance, or archive. Do not run CE-native side effects. Stop after validation.
+
+Stop on blockers, no-op, or stale task/artifact state; never retry unchanged inputs or accept proofs from an older revision. No adapter-managed worktrees or durable artifacts outside changeRoot. Declared disposable test output does not create workflow state.
+
+Refresh `openspec status --change "<change>" --json` even on a blocked handoff when possible. Return outcome, proof, mutations, blocker, and refreshed status in this universal result packet: Outcome (completed/blocked/no-op/stale); Change/Schema/Artifact-or-task/Batch/Worker/Dependency layer (explicit validated IDs, none if inapplicable); Proof (exact commands/results, revision context and gaps); Mutations (none or declared test output paths); OpenSpec state (refreshed status or unavailable); Continuation (remaining proofs and prerequisites); Blocker (or none); Next command (one exact command, not executed). After all proofs pass return `/opsx-ce-compound "<change>"` for an eligibility decision, not automatic learning creation. For a mapped reproducible failure return `/opsx-ce-debug "<change>" "<task>"`; otherwise return a safe status/instructions command, or `none` plus the required decision when no command is safe. Substitute resolved values and retain named-store selection. Report unavailable CLI honestly; never install a runtime.

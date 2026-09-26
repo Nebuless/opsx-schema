@@ -1,0 +1,182 @@
+name: compound-intent-driven
+version: 1
+description: >-
+  Intent-driven OpenSpec workflow shaped by Compound Engineering's core loop -
+  define -> plan -> build -> simplify -> review -> compound
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: Requirements and intent contract for the change
+    template: proposal.md
+    instruction: >
+      Define WHAT this change needs to become. Apply the ce-brainstorm
+      discipline without creating a separate CE plan: inspect repository
+      evidence and relevant durable learnings first; ask the user only about
+      material decisions that evidence cannot answer; compare 2-3 concrete
+      product or behavior approaches before recording a recommendation.
+
+      Write proposal.md using the template. It MUST establish the problem,
+      desired outcome, scope boundaries, chosen approach and trade-offs,
+      observable success signals, and capabilities whose behavior will be
+      specified. Define is complete only after proposal.md and concrete specs
+      are written: every named capability requires a non-empty
+      specs/<capability>/spec.md through the specs artifact. Preserve decisions
+      already settled by the user; do not invent implementation details.
+
+      Before finalizing, check whether a repository learning store (normally
+      docs/solutions/) contains relevant constraints, root causes, or rejected
+      approaches. Cite applicable learnings under Prior Learning. State None
+      when no relevant learning exists. Do not create a learning at this stage.
+      End with the exact next OpenSpec command, or the blocking condition when
+      no command is safe.
+    requires: []
+  - id: specs
+    generates: specs/**/*.md
+    description: Observable behavior specifications for each capability
+    template: spec.md
+    instruction: >
+      Create one OpenSpec Markdown delta at specs/<capability>/spec.md for
+      every capability named by the proposal. Write WHAT a user or caller can
+      observe, not implementation mechanics. Reuse the proposal's terms and
+      boundaries.
+
+      Use CLI changeRoot, artifactPaths, resolvedOutputPath, and dependency paths
+      from status/instructions as authority. All generates paths are relative
+      to changeRoot, not the working directory. specs/**/*.md is a glob:
+      write non-empty <changeRoot>/specs/<capability>/spec.md for each capability.
+      Never write a literal glob path or count an empty directory as completion.
+      Read concrete dependency files; verify existingOutputPaths and refreshed
+      status after writing. Missing metadata or conflicting paths are blockers.
+
+      Use ADDED, MODIFIED, REMOVED, or RENAMED requirement headers. Every
+      requirement MUST use SHALL or MUST and contain at least one scenario.
+      Every scenario MUST use exactly `#### Scenario:` plus GIVEN, WHEN, and
+      THEN steps. For MODIFIED requirements, copy the entire existing
+      requirement block from openspec/specs/<capability>/spec.md before
+      editing, so archive preserves prior behavior.
+
+      Specs define acceptance conditions for planning and review. Do not add a
+      test framework or an executable-spec harness unless the repository
+      already owns one. End with the exact next OpenSpec command, or the
+      blocking condition when no command is safe.
+    requires:
+      - proposal
+  - id: design
+    generates: design.md
+    description: Implementation-ready guardrails and verification strategy
+    template: design.md
+    instruction: >
+      Plan HOW the approved behavior can be delivered. Apply the ce-plan
+      discipline: research current patterns and prior learnings, make
+      decisions from evidence, and write guardrails rather than line-by-line
+      implementation choreography.
+
+      Write design.md using the template. It MUST preserve proposal scope and
+      specs, state technical decisions with alternatives, identify affected
+       seams and interfaces, and name stable implementation units (U1, U2, ...).
+       Each unit records its batch, architectural layer, dependency order,
+       allowed path claims, observable proof, and continuation condition. Unit
+       IDs never renumber after creation. Include explicit non-goals, risks,
+       and unresolved blockers.
+
+      Read existing repository-level ADRs before planning. Honor currently
+      in-force ADRs and flag a conflict for the ADR artifact; do not rewrite
+      accepted ADRs here. Do not implement or run behavior-changing experiments
+      during this artifact. End with the exact next OpenSpec command, or the
+      blocking condition when no command is safe.
+    requires:
+      - proposal
+  - id: adr
+    generates: adr.md
+    description: Per-change durable architecture decision review
+    template: adr.md
+    instruction: >
+      Review design.md for durable architecture commitments. Write the
+      change-local manifest at the CLI resolvedOutputPath (<changeRoot>/adr.md).
+      It MUST list
+      in-force repository ADRs reviewed and every new repository-level ADR
+      created for this change.
+
+      Create a repository-level ADR only for a material, long-lived decision
+      that future changes must honor. Accepted ADRs are immutable: never edit
+      one. A changed decision requires a new ADR under <repo>/adr/ with an
+      incremented NNNN filename and a Supersedes field naming the prior ADR.
+      If no decision clears this bar, say so explicitly in the manifest.
+      End with the exact next OpenSpec command, or the blocking condition when
+      no command is safe.
+    requires:
+      - design
+  - id: tasks
+    generates: tasks.md
+    description: Vertical, independently verifiable execution checklist
+    template: tasks.md
+    instruction: >
+      Convert design units into a dependency-ordered execution checklist.
+      Use numbered headings and `- [ ] X.Y` checkboxes exactly; OpenSpec tracks
+      those checkboxes during apply.
+
+      Each task MUST be a vertical slice that maps to one or more stable U-IDs.
+      Put batch, layer, path claim, proof, and continuation metadata in prose
+      directly below the checkbox, never inside checkbox text. Do not create
+      horizontal plumbing tasks, generic review tasks, or tracker-only tasks.
+      Include strict change validation when behavior specs change and schema
+      validation when this schema changes. End with the exact next OpenSpec
+      command, or the blocking condition when no command is safe.
+    requires:
+      - specs
+      - adr
+apply:
+  requires:
+    - tasks
+  tracks: tasks.md
+  instruction: |
+    Execute the core loop against the approved OpenSpec artifacts. Read the
+    proposal, specs, design, adr.md, tasks.md, relevant repository code, and
+    applicable durable learnings before changing code. Treat proposal and
+    design decisions as guardrails, not scripts.
+
+    The outer loop selects one ready unchecked task at a time. It may assign
+    that task to one bounded worker. Before assignment, verify path isolation,
+    task dependencies, repository instructions, and ownership of any existing
+    worktree. A worktree is optional and may be used only when it was
+    pre-created and remains owned by the outer loop. Workers never create or
+    manage worktrees, branches, commits, pushes, pull requests, OpenSpec stages,
+    or a separate tracker.
+
+    Work each selected task in dependency order:
+
+    1. Implement (ce-work): establish the task's targeted proof before changing
+       behavior when feasible, follow repository patterns, make the smallest
+       correct change within its path claim, run the named proof, and mark the
+       checkbox only after it passes. For a reported bug, reproduce before
+       fixing and confirm the reproduction passes afterward. If the task cannot
+       be completed safely in the worker context, return continuation evidence
+       without checking the task; the outer loop resumes the same task.
+
+    2. Simplify (ce-simplify-code): after a coherent code unit settles, inspect
+       only its changed scope for existing reuse, dead weight, unclear structure,
+       or avoidable work. Keep behavior, trust-boundary validation, data-loss
+       protection, security checks, and accessibility safeguards intact. Skip
+       this pass for mechanical or documentation-only changes.
+
+    3. Review (ce-code-review): before completion, review the final diff against
+       the proposal, specs, design, ADR context, and repository standards.
+       Resolve verified in-scope findings, rerun affected checks, and record any
+       blocker that needs missing evidence or a user decision.
+
+    4. Validate: run every task's targeted verification, then
+       `openspec validate <change> --type change --strict` when behavior specs
+       exist. When this schema changed, run
+       `openspec schema validate compound-intent-driven`.
+
+    5. Compound (ce-compound): after verified work, capture one learning in the
+       repository learning store only when its non-obvious, durable, material
+       reasoning is not recoverable from code, tests, comments, or existing
+       documentation and losing it would cause recurrence, risk, or significant
+       rediscovery. Otherwise record no learning.
+
+    Completion requires every task checked, required validation passing, and no
+    unaddressed review finding or blocker. Every worker and outer-loop return
+    MUST include completed scope, proof, changed paths, continuation or blocker,
+    refreshed OpenSpec status, and the exact next OpenSpec command. OpenSpec
+    remains authority for artifacts, task state, stage readiness, and lifecycle.

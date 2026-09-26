@@ -1,0 +1,15 @@
+{
+  "version": "0.1.7-ezxomp.8",
+  "files": {
+    "cook-planner": "ac06f32e",
+    "cook-scout": "4240283",
+    "cook-researcher": "c521e236",
+    "cook-worker": "7fe868ef",
+    "cook-validator": "f6cb4adc",
+    "cook-judge": "1edcd8dc",
+    "cook-council": "7bc08404",
+    "cook-council-synthesis": "467252d6",
+    "cook-audit": "1def66e4",
+    "cook-refute": "1bf15c97"
+  }
+}

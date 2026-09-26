@@ -1,0 +1,125 @@
+name: intent-driven-design
+version: 1
+description: Intent-driven design workflow - journey -> proposal -> specs and design -> adr -> tasks
+artifacts:
+  - id: journey
+    generates: journey.md
+    description: Design-state evidence and agent protocol receipts
+    template: journey.md
+    instruction: |
+      Create <changeRoot>/journey.md at CLI resolvedOutputPath before proposing work.
+      Use changeRoot, artifactPaths, resolvedOutputPath, concrete dependency paths,
+      existingOutputPaths, and refreshed status from CLI output as authority.
+
+      Record material decisions, scope and exclusions, grilling receipt, route
+      selection, user approval receipts, stable branch IDs, accepted loopbacks,
+      sibling change IDs, and reconciliation receipts. This is design-state
+      evidence, not an implementation checklist or parallel task tracker.
+
+       Agent protocol requires explicit user pauses after discovery, route
+       selection, direction selection, accepted loopback, and pre-task handoff.
+       These pauses are agent behavior, not OpenSpec engine enforcement.
+
+       When this schema's optional MCP catalog is relevant, inspect project host
+       evidence. Reuse explicit current or prior user approval for MCP setup; if
+       none exists, ask once before configuration. After approval, invoke the
+       installer with `--mcp <all|catalog-name[,catalog-name...]>` and the chosen
+       `-a|--agents <host>`. Record host, evidence, approval source, target,
+       selected servers, per-server result, validation, and fallback in journey.
+       Never configure before approval. Pi has no native MCP configuration and is
+       guided-only until the user selects a compatible Pi extension.
+
+      File existence is OpenSpec completion evidence. Editing a predecessor does
+      not semantically invalidate, reopen, reconcile, or delete downstream
+      artifacts. After a loopback or sibling sync/archive, the agent MUST reread
+      concrete files from existingOutputPaths and canonical openspec/specs/,
+      refresh status, validate, reconcile affected outputs manually, and record
+      the result here.
+    requires: []
+  - id: proposal
+    generates: proposal.md
+    description: One change proposal defining intent, scope, and capabilities
+    template: proposal.md
+    instruction: |
+      Create one <changeRoot>/proposal.md at CLI resolvedOutputPath. Read journey.md
+      from CLI dependency paths. State why this change matters, scope and
+      exclusions, capabilities added or modified, impact, and chosen direction.
+      Keep implementation details in design.md. Alternate directions belong in
+      sibling changes, not multiple proposal files in one change root.
+    requires:
+      - journey
+  - id: specs
+    generates: specs/**/*.md
+    description: Observable behavior deltas for each affected capability
+    template: spec.md
+    instruction: |
+      Create OpenSpec Markdown delta specs defining WHAT the system does.
+      Use CLI changeRoot, artifactPaths, resolvedOutputPath, concrete dependency
+      paths, existingOutputPaths, and refreshed status as authority.
+      specs/**/*.md is a glob: write a non-empty
+      <changeRoot>/specs/<capability>/spec.md for every capability. OpenSpec 1.13.1
+      may count a literal specs/**/*.md file as output. Agents MUST reject that
+      state, require a non-empty <changeRoot>/specs/<capability>/spec.md, and
+      record the protocol failure. An empty directory also remains incomplete.
+
+      Use ## ADDED, MODIFIED, REMOVED, or RENAMED Requirements. Each requirement
+      uses SHALL or MUST and has at least one exact `#### Scenario:` with
+      GIVEN/WHEN/THEN. For MODIFIED, copy the complete canonical requirement from
+      openspec/specs/<capability>/spec.md before editing it.
+    requires:
+      - proposal
+  - id: design
+    generates: design.md
+    description: Implementation guardrails and selected technical direction
+    template: design.md
+    instruction: |
+      Create <changeRoot>/design.md at CLI resolvedOutputPath. Read proposal.md,
+      journey.md, relevant specs, and currently in-force repository ADRs. Define
+      context, goals, non-goals, selected direction, implementation guardrails,
+      alternatives, risks, migration, and open questions. Preserve intent and
+      observable behavior ownership in journey/proposal and specs respectively.
+
+      If discovery changes an accepted direction, pause for user approval, record
+      the loopback in journey.md, update affected artifacts manually, reread
+      existingOutputPaths and canonical openspec/specs/, refresh status, and
+      validate. Do not claim OpenSpec semantically invalidates downstream files.
+    requires:
+      - proposal
+  - id: adr
+    generates: adr.md
+    description: Change-local ADR completion manifest and durable decision handoff
+    template: adr.md
+    instruction: |
+      Write <changeRoot>/adr.md at CLI resolvedOutputPath as the completion
+      manifest. Review every currently in-force file under repository-level adr/.
+      List reviewed ADRs and every new durable ADR created for this change.
+
+      Durable architecture decisions live in new repository-level
+      adr/NNNN-kebab-title.md files. Accepted repository ADRs are immutable. To
+      replace one, create a new ADR with a Supersedes link; never edit the accepted
+      file. If no durable decision exists, state that explicitly in the manifest.
+    requires:
+      - design
+  - id: tasks
+    generates: tasks.md
+    description: One verifiable implementation checklist
+    template: tasks.md
+    instruction: |
+      Create one <changeRoot>/tasks.md at CLI resolvedOutputPath. Read concrete
+      specs, design.md, adr.md, journey.md, and repository ADRs. Before task
+      handoff, require the journey pre-task approval receipt and complete any
+      manual loopback or sibling reconciliation recorded there.
+
+      Use numbered groups and `- [ ] X.Y` checkboxes. Each task must deliver a
+      verifiable vertical result. Do not create another tracked task file.
+    requires:
+      - specs
+      - adr
+apply:
+  requires:
+    - tasks
+  tracks: tasks.md
+  instruction: |
+    Read context files, implement pending tasks, and mark tasks.md checkboxes.
+    Pause for blockers; do not advance stages, reconcile siblings, or mutate
+    accepted repository ADRs automatically.

@@ -1,0 +1,50 @@
+{
+  "formatVersion": 1,
+  "source": {
+    "package": "@nebulesstech/openspec-schemas",
+    "version": "1.8.1",
+    "repository": "https://github.com/Nebuless/openspec-schemas",
+    "revision": "2c1740206a4d1729b0285b07a5e79c181b12bf89",
+    "schema": "compound-intent-driven",
+    "directory": "openspec/schemas/compound-intent-driven/adapters/shared"
+  },
+  "digest": "822d28f8640456b8d91fd46879834fb25e2e0de934e965fffebfb76ebd70b9ed",
+  "files": [
+    {
+      "path": "opsx-ce-bulk-continue.md",
+      "sha256": "f6e2551679feea927c27dcb9ed31dd969b9ca91fbfda6304da6178b33f59cde4"
+    },
+    {
+      "path": "opsx-ce-compound.md",
+      "sha256": "d6fda3d0680b998903c5226507c9ac828c600777ad7921d1cd9c33479982a3d2"
+    },
+    {
+      "path": "opsx-ce-continue.md",
+      "sha256": "469bff275a68a12f60f74bcc64e361bc77415738ba24e8abcfed1ff589dc714f"
+    },
+    {
+      "path": "opsx-ce-debug.md",
+      "sha256": "7e3325961363eec8df1882a0875aa9889c620146b8a3830e95ccbd42020d1644"
+    },
+    {
+      "path": "opsx-ce-define.md",
+      "sha256": "fe8f183cfa482ecabed991d990ccd9982135b30cfdd3038b72941494e0b00664"
+    },
+    {
+      "path": "opsx-ce-plan.md",
+      "sha256": "2456f95b50f1dc5af05e9fc1881680389031f954bea2940ee717c19dc24600b6"
+    },
+    {
+      "path": "opsx-ce-review.md",
+      "sha256": "93581aeade542e8ee89fa70b9a8733c7ee3037083a84182e773853c747b9fb35"
+    },
+    {
+      "path": "opsx-ce-validate.md",
+      "sha256": "ee9dc70e4475bfcabba48d5fd1f1ed5dd29c1641f7644f92b4e17fa114ab27fb"
+    },
+    {
+      "path": "opsx-ce-work.md",
+      "sha256": "9e4129acef5c43331cfb8e718140b1cd78a43c33db7e5b954f862c372b3e07c0"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+# Source-aware manifest: <owner/repository><TAB><repository-relative-skill-directory>
+# A line without a tab is a legacy skill name resolved from
+# intent-driven-dev/skills/.agents/skills/<skill-name>.
+intent-driven-dev/skills	.agents/skills/acceptance-test-authoring
+intent-driven-dev/skills	.agents/skills/architectural-decision-records
+intent-driven-dev/skills	.agents/skills/c4-diagrams
+intent-driven-dev/skills	.agents/skills/gherkin-authoring
+intent-driven-dev/skills	.agents/skills/glossary
+intent-driven-dev/skills	.agents/skills/openspec-git-discipline
+intent-driven-dev/skills	.agents/skills/spec-as-source
+mattpocock/skills	skills/engineering/code-review
+mattpocock/skills	skills/engineering/codebase-design
+mattpocock/skills	skills/engineering/diagnosing-bugs
+mattpocock/skills	skills/engineering/domain-modeling
+mattpocock/skills	skills/engineering/prototype
+mattpocock/skills	skills/engineering/research
+mattpocock/skills	skills/engineering/tdd
+mattpocock/skills	skills/productivity/grilling

@@ -1,0 +1,63 @@
+# Dependencies and package-manager caches
+node_modules/
+.bun/
+
+# Build and test output
+/dist/
+/build/
+/coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OpenTUI diagnostic artifacts
+buffer_dump/
+opentui-stdin*.bin
+
+# Local editor and OS files
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Local OMP watcher state
+.omp-watch.lock
+
+# Omitted from the public source snapshot. Bundled host resources under
+# resources/ remain tracked; only root-level host setup is excluded.
+/.agents/
+/.atomic/
+/.codesight/
+/.config/
+/.hermes/
+/.omo/
+/.omp/
+/.openspec/
+/.pi/
+/.qlty/
+/.trunk/
+/backlog/
+/benchmarks/
+/scripts/
+/wiki/
+/AGENTS.md
+/.pre-commit-config.yaml
+/skills-lock.json
+/.worktrees/
+
+# Per-project switch recovery state is machine-specific, not a source spec.
+/openspec/.opsx/
+
+# Resource-local legacy project records are not part of this curated public source.
+/resources/openspec/changes/archive/
+/resources/openspec/specs/

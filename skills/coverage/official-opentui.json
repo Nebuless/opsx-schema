@@ -1,0 +1,468 @@
+{
+  "source": "https://github.com/anomalyco/opentui",
+  "revision": "684d70ce1b442702a2f4cc05831539629387226c",
+  "pages": [
+    {
+      "path": "docs/application-apis/animation.mdx",
+      "sha": "7999ec4d6f8eac8f42050654b679d3faa81af3bd",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/application-apis/audio-capture.mdx",
+      "sha": "06f72ca54523901738e77c022615ab932b60a98a",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/application-apis/audio-streaming.mdx",
+      "sha": "14eb5e1f8a9740ebaaa9c8a113aca375d00eba8a",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/bindings/react.mdx",
+      "sha": "814d2a9e5a567511cc124d51296ee6a69cb20b5c",
+      "skill": "opentui-react",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/bindings/solid.mdx",
+      "sha": "30ce445516ff1cd20027db4f1667c8688b534977",
+      "skill": "opentui-solid",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/ascii-font.mdx",
+      "sha": "73ac776e0d62e6984cd0785d5c618cc8c3dd4d41",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/box.mdx",
+      "sha": "45fcd80444025a87925d2a6697dec6ddcacd20d0",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/code.mdx",
+      "sha": "e6458c42de6f5e68daf53724d464d04a9e5796d7",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/diff.mdx",
+      "sha": "60f610e11ebf2ca0419469c3d62865bb6727ed4b",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/embedded-terminal.mdx",
+      "sha": "f3f897cac2927c7bbc929f6944816689a7259318",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/frame-buffer.mdx",
+      "sha": "a6baf228a4f7e4e5ec27addd8f69ac366a72fdbc",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/image.mdx",
+      "sha": "6c887ae1466efe26dbb924f5c30188f2f9c5e40a",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/input.mdx",
+      "sha": "0431e2f9ad26d12a2d147aa095029a75ab4d6332",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/line-number.mdx",
+      "sha": "c40f38bf2d146b46da4f832d8b322be5342a0404",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/markdown.mdx",
+      "sha": "ec663902894c20fd9232cffe7ef295358b76d16d",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/overview.mdx",
+      "sha": "3b46ee0ec7e2fb91cc642a46bda6d4eb007e171c",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/qr-code.mdx",
+      "sha": "d0fd51d3fee9411871351888d1e1b07be8a7d935",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/scrollbar.mdx",
+      "sha": "0ea088102a904de372b5416cd6b79b56ee1a803c",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/scrollbox.mdx",
+      "sha": "672344aeecdd2825fee68fde0e945fe8b388064d",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/select.mdx",
+      "sha": "eeac0f0d33d9d037473f811921f390cd8456eb5d",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/slider.mdx",
+      "sha": "fcb9282253dd17e7b04c20139109541302405cc6",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/tab-select.mdx",
+      "sha": "611b1233ea1fda53e40d78e9b3ba24fef26cef48",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/text-table.mdx",
+      "sha": "ecabb07db6f1c8fdb5d8c0cf457a70b02434d73c",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/text.mdx",
+      "sha": "13c457ca752406571744fdbd6978080fa10448cc",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/textarea.mdx",
+      "sha": "d75e5783284153f53843c4429e6256484c3d70a0",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/components/time-to-first-draw.mdx",
+      "sha": "5047088d26c9091c49442438f476b5fc51c16f7b",
+      "skill": "opentui-components",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/audio.mdx",
+      "sha": "421802c8454f54878ca77a7f8c3fdc4273bd53b7",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/clipboard.mdx",
+      "sha": "55b1cb0cb586974a2be8be18095d4aa0c7f45058",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/colors.mdx",
+      "sha": "558cf7b736696cf3ad99f2a93f54ad0a6ac77c83",
+      "skill": "opentui-design",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/console.mdx",
+      "sha": "e9fbd43494d39eb775992b973b5edef16e625bd9",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/interaction.mdx",
+      "sha": "d71d9453592d3fe5d7b384b09c1c16e1fb184ed5",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/keyboard.mdx",
+      "sha": "fe65110e826fbb1dfe6f793708a6d9c38c4095d2",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/layout.mdx",
+      "sha": "72a6e4be2cc60ed7d0191d2cbdf5f89c0cea230c",
+      "skill": "opentui-design",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/lifecycle.mdx",
+      "sha": "f4515dbbfeb94e49ebce69490cf5e46cd45b35ae",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/notifications.mdx",
+      "sha": "f25e4e17289417421327e99c4a6ccc0e77f1080a",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/renderables.mdx",
+      "sha": "3d9bdf82bf5cf1ab24a1dfabb612f37562176d5b",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/renderer.mdx",
+      "sha": "bb8696a968da907ffbbd1bbeda11cf47af938afd",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/rendering-pipeline.mdx",
+      "sha": "4f97b7f562dadff0cd305265846471231c09ba74",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/testing.mdx",
+      "sha": "d364cd90daa739af3e5a3b6989d3d70fa5043938",
+      "skill": "opentui-test-and-ship",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/core-concepts/text-and-cells.mdx",
+      "sha": "54c1f90cee82fed685e703a32439432bd7722028",
+      "skill": "opentui-design",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/extend/custom-renderables.mdx",
+      "sha": "bb45badf88a0893cce770ccd0df0ac65148668ce",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/extend/editing.mdx",
+      "sha": "c41432b92c95400bffadb5c751a44df902b2f760",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/extend/post-processing.mdx",
+      "sha": "b7818fcc75264c841f7aa54f0c9e35a62aff07b8",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/extend/runtime-plugins.mdx",
+      "sha": "2c5dbd5edcf5983017d35bd5bc6845658baa92fa",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/getting-started.mdx",
+      "sha": "41eba19bf892fce06bef756de1b155be22a0f5d9",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/getting-started/quickstart.mdx",
+      "sha": "d2570cb989e8579d59bd9a8318aaf9f50c6bb3df",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/getting-started/runtime-support.mdx",
+      "sha": "7127a6431b1197136f4eff659c77e7a8c8842155",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/addons.mdx",
+      "sha": "9f368e06c2c9132f37b3e90aac0ee3e8e7cb4a11",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/core.mdx",
+      "sha": "a11f9d5acfeb535067bdbb4e5e5a9c029f069f46",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/custom-addons.mdx",
+      "sha": "9269ad1f212d19f0c31755ebdbb579c0eb62285f",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/hosts.mdx",
+      "sha": "588194b49960047cc31dbdd87f79a4ec0ac7957a",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/overview.mdx",
+      "sha": "d03353b3cfc150a3bc780360b73383f12e49417f",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/react.mdx",
+      "sha": "e2aa2f3e78cc8251632f2c72387b5ae9ff6d9ede",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/keymap/solid.mdx",
+      "sha": "27186de83fa4ac19b6a4079c71d5a6fe092c07bf",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/plugins/core.mdx",
+      "sha": "ba8f87fb7d668dfb80420b51a95ed7fa691dbe1e",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/plugins/react.mdx",
+      "sha": "15417b1cbd71e1a7934c2828bd1d40b4c30118d4",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/plugins/slots.mdx",
+      "sha": "102a82a852c8c3f7c9d2a33c36f1e39563a61447",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/plugins/solid.mdx",
+      "sha": "56e89b132e7bf0278d72e25278314b141e0c5e9f",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/api-index.mdx",
+      "sha": "e7c91dcd9552b43e62709e1cec99c81bf923ed5a",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/buffer-api.mdx",
+      "sha": "62f4ef3c2a98b0e3a631b15dae91def6046ac332",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/color-matrix.mdx",
+      "sha": "63f9b18a6adcbfe6afe25a323c960263d9722ff2",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/data-paths.mdx",
+      "sha": "67919f60e60a7f38a69de0e75e1500103deea820",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/env-vars.mdx",
+      "sha": "c983f0352ae09d15869cfa59dd2ed5b117e084a7",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/native-image.mdx",
+      "sha": "2324a466653d0fa52af15cd2f9cbae35a6d761af",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/native-span-feed.mdx",
+      "sha": "4f0390e363dad99a5adc46cf8d5b993fee72cac2",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/package-entrypoints.mdx",
+      "sha": "b3731756b6e5d3016a600de13006942b47594736",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/qr-encoder.mdx",
+      "sha": "5b07e46a6d110ea91e13b75d4009dee211fab0d5",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/ssh.mdx",
+      "sha": "4e572bc9317844c7ad73d1493fca53c5f85fe5e3",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/standalone-executables.mdx",
+      "sha": "fd07b1e408401d2de188356c8d9153635f0ef135",
+      "skill": "opentui-test-and-ship",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/terminal-capabilities.mdx",
+      "sha": "8f60637e48e0e27833b5142aba5c478c17a5de96",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/three.mdx",
+      "sha": "fa9299c5803c155dc37d549c5a287ede18439937",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/tree-sitter.mdx",
+      "sha": "5b33867c3ab158002b35092edbd77dfae4ae31ad",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/reference/yoga.mdx",
+      "sha": "4c04d763b7533ce76b3734c1c1ef20c9fd79d411",
+      "skill": "opentui-core",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/ship/deploy.mdx",
+      "sha": "96ef14c271da49d00ba0f7c805d6786cfa9856d2",
+      "skill": "opentui-test-and-ship",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/test-and-debug/native-crashes.mdx",
+      "sha": "074db030dddf3f1bef979c8b5da7d3c9ada14a8c",
+      "skill": "opentui-test-and-ship",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/test-and-debug/rendering-diagnostics.mdx",
+      "sha": "dffea5a81eda4827a9cf2db956e362aecafd2182",
+      "skill": "opentui-test-and-ship",
+      "status": "review-needed"
+    },
+    {
+      "path": "docs/test-and-debug/troubleshooting.mdx",
+      "sha": "5447cdca9bf6cfe665053fc675a469af94307764",
+      "skill": "opentui-test-and-ship",
+      "status": "review-needed"
+    }
+  ]
+}

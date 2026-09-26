@@ -1,0 +1,35 @@
+{
+  "observedAt": "2026-09-25",
+  "sources": [
+    {
+      "name": "official-opentui",
+      "repository": "anomalyco/opentui",
+      "revision": "684d70ce1b442702a2f4cc05831539629387226c",
+      "authority": "canonical OpenTUI API and docs"
+    },
+    {
+      "name": "msmps-skill",
+      "repository": "msmps/opentui-skill",
+      "revision": "0d61d6d89e3807528fd997c632c5745422e30cae",
+      "authority": "community skill; verify against canonical docs"
+    },
+    {
+      "name": "create-tui",
+      "repository": "msmps/create-tui",
+      "revision": "12bb9742535af7b325724d2fc558ccfe78d30413",
+      "authority": "scaffolding CLI and templates"
+    },
+    {
+      "name": "termcn",
+      "repository": "shadcn-labs/termcn",
+      "revision": "9d06ed9ca7bd54625fb5ab72e9598865836e695e",
+      "authority": "third-party React recipe catalog; repository MIT, inspect assets separately"
+    },
+    {
+      "name": "tuiparts",
+      "repository": "tuiparts/tuiparts",
+      "revision": "fffc67b4a124a5558d0374b216275c948200e662",
+      "authority": "third-party primitives and recipes; license not established by repository metadata"
+    }
+  ]
+}

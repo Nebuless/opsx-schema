@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "agents": {
+    "claude-code": {
+      "label": "Claude Code",
+      "target": ".claude/skills"
+    },
+    "codex": {
+      "label": "Codex",
+      "target": ".agents/skills"
+    },
+    "cursor": {
+      "label": "Cursor",
+      "target": ".cursor/skills"
+    },
+    "gemini-cli": {
+      "label": "Gemini CLI",
+      "target": ".gemini/skills"
+    },
+    "opencode": {
+      "label": "OpenCode",
+      "target": ".agents/skills"
+    }
+  }
+}

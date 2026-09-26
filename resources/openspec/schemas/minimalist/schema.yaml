@@ -1,0 +1,31 @@
+name: minimalist
+version: 1
+description: Lightweight schema for well-scoped, low-risk changes
+artifacts:
+  - id: specs
+    generates: specs/**/*.md
+    description: Specifications authored as user stories with Given/When/Then acceptance criteria
+    template: specs/spec.md
+    instruction: |
+      Use CLI changeRoot, artifactPaths, resolvedOutputPath, and dependency paths
+      from status/instructions as authority. All generates paths are relative
+      to changeRoot, not the working directory. specs/**/*.md is a glob:
+      write non-empty <changeRoot>/specs/<capability>/spec.md for each capability.
+      Never write a literal glob path or count an empty directory as completion.
+      Read concrete dependency files; verify existingOutputPaths and refreshed
+      status after writing. Missing metadata or conflicting paths are blockers.
+      Choose kebab-case capabilities from the agreed change scope; no proposal
+      is required. Fill the template with user stories and Given/When/Then
+      acceptance criteria. template: specs/spec.md names the schema template,
+      not the output file.
+    requires: []
+  - id: tasks
+    generates: tasks.md
+    description: Implementation checklist with trackable tasks
+    template: tasks.md
+    requires:
+      - specs
+apply:
+  requires:
+    - tasks
+  tracks: tasks.md

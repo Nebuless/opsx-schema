@@ -1,0 +1,43 @@
+{
+  "name": "opsx-schema",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nebuless/opsx-schema.git"
+  },
+  "type": "module",
+  "files": [
+    "src", "assets", "opsx-schema.json", "docs/commands.md", "LICENSE",
+    "resources/LICENSE", "resources/README.md", "resources/CONTRIBUTING.md",
+    "resources/openspec/schemas",
+    "resources/.agents", "resources/.atomic", "resources/.claude", "resources/.codex",
+    "resources/.omp", "resources/.opencode", "resources/.pi", "resources/.senpi"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "bin": {
+    "opsx-schema": "./src/domain/cli.ts"
+  },
+  "scripts": {
+    "test": "bun run test:app && bun run test:schemas",
+    "test:app": "bun test test --timeout 30000",
+    "test:schemas": "sh resources/scripts/check-resources.sh",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun run test"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.12",
+    "@opentui/react": "^0.5.12",
+    "@toon-format/toon": "^4.1.1",
+    "react": "^19.2.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}
