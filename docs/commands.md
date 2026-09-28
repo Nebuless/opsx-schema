@@ -1,6 +1,6 @@
 # opsx-schema command guide
 
-`opsx-schema` is the single supported distributable CLI/TUI for managing the bundled OpenSpec schemas, agent-skill resources, and declared MCP catalogs. The canonical repository-root package is `opsx-schema@0.1.0`.
+`opsx-schema` is the single supported distributable CLI/TUI for managing the bundled OpenSpec schemas, agent-skill resources, and declared MCP catalogs. The canonical repository-root package is `opsx-schema`.
 
 The previously published `@nebulesstech/openspec-schemas@1.8.0` is a legacy standalone schema package. Its separate install path is deprecated for the current workflow and is neither used nor required by `opsx-schema`.
 
@@ -203,7 +203,7 @@ MCP installation adds a distinct interactive safety gate: use a real TTY and app
 
 ## Source capability parity and legacy migration
 
-The previously published `@nebulesstech/openspec-schemas@1.8.0` package and its standalone binaries are legacy. The current root `opsx-schema@0.1.0` is the only supported app and installer; it bundles schemas, skill/host resources, and catalogs in one archive. The old package installation route is deprecated for this workflow and is not used as a dependency or override. This documentation does not claim that the package has been deprecated in the npm registry.
+The previously published `@nebulesstech/openspec-schemas@1.8.0` package and its standalone binaries are legacy. The current root `opsx-schema` package is the only supported app and installer; it bundles schemas, skill/host resources, and catalogs in one archive. The old package installation route is deprecated for this workflow and is not used as a dependency or override. This documentation does not claim that the package has been deprecated in the npm registry.
 
 This matrix maps legacy command capabilities to the new command grammar; it is not a flag-compatible upgrade:
 
