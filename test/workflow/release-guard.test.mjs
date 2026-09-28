@@ -329,6 +329,11 @@ test("empty, heading-only, and placeholder release entries fail before the next 
     "- [x]\n",
     "placeholder\n",
     "<!-- TODO -->\n",
+    "- <!-- TODO -->\n",
+    "1. <!-- TODO -->\n",
+    "- [x] <!-- TODO -->\n",
+    "- <!--\nTODO: notes\n-->\n",
+    "- ### Fixed\n",
   ]) {
     const changelog = `## [1.2.3] - 2026-09-28\n${body}\n## [1.2.2] - 2026-09-01\n- Existing notes`;
     expect(() =>
