@@ -756,6 +756,7 @@ export async function installBundledSchema(
   name: string,
   plan?: BundledSchemaPlan,
 ): Promise<BundledSchemaInstallResult> {
+  await new OpenSpecClient(root).ensureSupported();
   const destinationName =
     plan?.destinationName === name ? undefined : plan?.destinationName;
   const current = await prepareBundledSchema(root, name, destinationName);

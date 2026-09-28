@@ -9,7 +9,7 @@ The previously published `@nebulesstech/openspec-schemas@1.8.0` is a legacy stan
 Requirements:
 
 - Bun 1.4.0 or newer (the package declares `engines.bun >=1.4.0`).
-- OpenSpec CLI 1.12.0 for project lifecycle commands. This build checks the OpenSpec CLI version and rejects a different version rather than guessing compatibility.
+- A stable OpenSpec CLI 1.x release from 1.12.0 onward for project lifecycle commands. If yours is older, [update OpenSpec](https://github.com/Fission-AI/OpenSpec) before installing a schema. Prereleases, unrecognized versions and future major versions remain blocked until their contracts are reviewed.
 - A usable interactive terminal for the dashboard and MCP Apply approval.
 
 For a local package-consumer smoke test, pack the repository root once and install that tarball in a disposable consumer. The tarball is self-contained; do not pack or override a second schema package:
@@ -230,9 +230,9 @@ The rows below are the evidence collected for this release slice, not a claim th
 
 | Component | Version/target | Evidence and boundary |
 | --- | --- | --- |
-| OpenSpec CLI | 1.12.0 | Exact version reported locally; project CLI read was exercised. The client rejects every version other than 1.12.0 in this build. |
+| OpenSpec CLI | 1.13.2 | Locally exercised for project reads and schema-switch preview. The client accepts stable 1.x releases from 1.12.0 onward and blocks versions outside that range. |
 | Bun | 1.4.2 | Local CLI, package pack/install smoke and TTY dashboard smoke; package metadata requires Bun >=1.4.0. Only 1.4.2 was exercised here. |
 | React OpenTUI | `@opentui/core 0.5.12` and `@opentui/react 0.5.12` (React 19.2) | Locked and used by the Linux TTY dashboard smoke. No other OpenTUI release was validated for this slice. |
 | OS / architecture | Linux x86_64 | Packaged CLI and interactive dashboard smoke were exercised here. macOS, Windows, Linux ARM64 and other libc/terminal combinations were not release-tested; their support is not inferred from optional dependency package names. |
 
-Before relying on another OpenSpec CLI version or operating-system/architecture combination, run the package, CLI and interactive TTY checks on that target. The OpenSpec compatibility guard is intentionally exact, not a broad semver claim.
+Before relying on another operating-system/architecture combination, run the package, CLI and interactive TTY checks on that target. For a future OpenSpec major release, update opsx-schema to a build tested against its contract rather than bypassing the compatibility guard.

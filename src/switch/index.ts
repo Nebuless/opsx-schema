@@ -938,7 +938,7 @@ async function installPlan(
     selectionReceiptPath(root),
   );
   const client = new OpenSpecClient(root);
-  client.ensureSupported();
+  await client.ensureSupported();
   const currentDefault = await defaultSchema(root);
   const configPath = path.join(root, "openspec", "config.yaml");
   const configBefore = await fileSnapshot(configPath);

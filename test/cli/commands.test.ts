@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { decode } from "@toon-format/toon";
 import {
   access,
+  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -47,10 +48,12 @@ async function fixture(): Promise<string> {
 function invoke(
   args: string[],
   cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): { code: number; stdout: string; stderr: string } {
   const result = Bun.spawnSync({
     cmd: [process.execPath, cli, ...args],
     cwd,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -60,6 +63,43 @@ function invoke(
     stderr: new TextDecoder().decode(result.stderr),
   };
 }
+
+test("older OpenSpec refuses schema installation and switch without writes or a rejection stack", async () => {
+  const root = await fixture();
+  const bin = path.join(root, "bin");
+  await mkdir(bin);
+  const executable = path.join(bin, "openspec");
+  await writeFile(
+    executable,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.11.9; else echo unexpected-command >&2; exit 99; fi\n',
+  );
+  await chmod(executable, 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+  for (const words of [
+    ["schemas", "install", "intent-driven"],
+    ["schema", "switch", "intent-driven", "--bundle", "default"],
+  ]) {
+    const result = invoke(["--project", root, "--json", ...words], root, env);
+    expect(result.code).not.toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      error: { code: "OPENSPEC_UNSUPPORTED" },
+    });
+    expect(result.stdout).toContain("https://github.com/Fission-AI/OpenSpec");
+    expect(result.stderr).not.toContain("Unhandled");
+    expect(result.stderr).not.toContain("at async");
+    expect(result.stderr).not.toContain("unexpected-command");
+  }
+  expect(await stat(path.join(root, "openspec", "config.yaml"))).toBeTruthy();
+  expect(
+    await Bun.file(path.join(root, "openspec", "config.yaml")).text(),
+  ).toBe("schema: spec-driven\n");
+  expect(
+    await Bun.file(
+      path.join(root, "openspec", "schemas", "intent-driven"),
+    ).exists(),
+  ).toBe(false);
+});
 
 test("status JSON and default TOON retain the resolved project snapshot", () => {
   const json = invoke(

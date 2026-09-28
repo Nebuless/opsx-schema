@@ -4,7 +4,7 @@ Choose an [OpenSpec](https://github.com/Fission-AI/OpenSpec) workflow, inspect y
 
 ## Run without installing
 
-Use [Bun 1.4+](https://bun.sh/) and, for project commands, OpenSpec CLI 1.12.0 on your `PATH`. From a terminal in an OpenSpec project:
+Use [Bun 1.4+](https://bun.sh/) and, for project commands, a stable OpenSpec CLI 1.x release from 1.12.0 onward on your `PATH`. If yours is older, [update OpenSpec](https://github.com/Fission-AI/OpenSpec) before installing a schema. From a terminal in an OpenSpec project:
 
 ```sh
 bunx opsx-schema

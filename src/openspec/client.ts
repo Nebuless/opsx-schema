@@ -8,6 +8,29 @@ export interface OpenSpecCommandResult {
   errorMessage?: string;
 }
 
+const OPENSPEC_URL = "https://github.com/Fission-AI/OpenSpec";
+const VERSION_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+
+function unsupportedVersion(
+  version: string,
+  problem: string,
+  guidance: string,
+): OpsxError {
+  const reported = version ? JSON.stringify(version) : "empty output";
+  return new OpsxError(
+    "OPENSPEC_UNSUPPORTED",
+    problem +
+      " (OpenSpec --version reported " +
+      reported +
+      "). " +
+      guidance +
+      " Official OpenSpec project: " +
+      OPENSPEC_URL +
+      ".",
+  );
+}
+
 export class OpenSpecClient {
   private supportCheck?: Promise<void>;
 
@@ -76,13 +99,41 @@ export class OpenSpecClient {
     const result = await this.execute(["--version"]);
     if (result.status !== 0) throw this.commandFailure(["--version"], result);
     const version = result.stdout.trim();
-    // The 1.12.0 JSON contract below was exercised against the installed CLI.
-    if (version !== "1.12.0") {
-      throw new OpsxError(
-        "OPENSPEC_UNSUPPORTED",
-        `OpenSpec ${version} is not verified; this build supports 1.12.0. Install that version or use a build tested against yours.`,
+    const parsed = VERSION_PATTERN.exec(version);
+    if (!parsed)
+      throw unsupportedVersion(
+        version,
+        "Malformed OpenSpec version string.",
+        "Install or select a stable OpenSpec 1.x release >=1.12.0 before retrying.",
       );
-    }
+    if (parsed[4] !== undefined)
+      throw unsupportedVersion(
+        version,
+        "Pre-release OpenSpec versions are not supported.",
+        "Switch to a stable OpenSpec 1.x release >=1.12.0 before retrying.",
+      );
+    if (parsed[1] === "0")
+      throw unsupportedVersion(
+        version,
+        "OpenSpec " + version + " is older than the supported minimum 1.12.0.",
+        "Upgrade OpenSpec to 1.12.0 or newer stable 1.x.",
+      );
+    if (parsed[1] !== "1")
+      throw unsupportedVersion(
+        version,
+        "OpenSpec major version " + parsed[1] + " is not supported.",
+        "Switch to a stable OpenSpec 1.x release >=1.12.0, or use an opsx-schema build compatible with OpenSpec major version " +
+          parsed[1] +
+          ".",
+      );
+
+    const minor = parsed[2];
+    if (minor.length < 2 || (minor.length === 2 && minor < "12"))
+      throw unsupportedVersion(
+        version,
+        "OpenSpec " + version + " is older than the supported minimum 1.12.0.",
+        "Upgrade OpenSpec to 1.12.0 or newer stable 1.x.",
+      );
   }
 
   async ensureSupported(): Promise<void> {

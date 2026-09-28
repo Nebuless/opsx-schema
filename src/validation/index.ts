@@ -414,7 +414,7 @@ async function prepareContext(root: string, change: string): Promise<Context> {
       : history.currentSchema;
     context.revision = revisionFor(provenance, context.schema);
     context.client = new OpenSpecClient(context.root);
-    context.client.ensureSupported();
+    await context.client.ensureSupported();
 
     if (context.schema === "Unknown" || !SAFE_NAME.test(context.schema)) {
       fail(
