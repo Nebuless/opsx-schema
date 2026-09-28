@@ -1,6 +1,10 @@
 # opsx-schema
 
-A single Bun/OpenTUI CLI and dashboard for OpenSpec projects. The `opsx-schema` package bundles the custom schemas and host resources and is the only supported app/installer for schema, agent-skill, and MCP management.
+I liked OpenSpec's durable change records, but I also use other skills. I built `opsx-schema` to make repeatable workflows easier to set up and see from one place.
+
+This OpenSpec adaptation gives people using other skills one Bun CLI and terminal dashboard to choose schema workflows and companion skills intentionally, inspect changes, and manage resources. OpenSpec still owns the change lifecycle; this tool does not replace it.
+
+The `opsx-schema` package bundles the custom schemas and host resources and is the only supported app/installer for schema, agent-skill, and MCP management.
 
 ## Package and installation
 
@@ -34,7 +38,7 @@ bun add --global opsx-schema@<version>
 opsx-schema --help
 ```
 
-Requirements: Bun 1.4 or newer, and OpenSpec CLI 1.12.0 for project lifecycle operations. On an interactive terminal, `bun src/domain/cli.ts --project .` opens the dashboard. Bun runs the TypeScript entry point directly; there is no separate build step. A bare invocation without a usable TTY fails rather than emitting UI into a pipe. Use explicit commands for noninteractive work. See the [command guide](./docs/commands.md) for syntax, output contracts, and approval boundaries.
+Requirements: Bun 1.4 or newer, and OpenSpec CLI 1.12.0 for project-aware commands. On an interactive terminal, `bun src/domain/cli.ts --project .` opens the dashboard. Bun runs the TypeScript entry point directly; there is no separate build step. A bare invocation without a usable TTY fails rather than emitting UI into a pipe. Use explicit commands for noninteractive work. See the [command guide](./docs/commands.md) for syntax, output contracts, and approval boundaries.
 
 Every mutation previews first. Schema installation/switching and agent-skill installation require their exact preview token before Apply. `skills inspect` is a local, read-only catalog query; `skills install` may fetch schema-declared external GitHub skill repositories while preparing its preview. MCP list/inspect and install preview read the bundled catalog and do not write provider configuration. MCP Apply has its own interactive approval gate; no schema operation installs a provider implicitly.
 
