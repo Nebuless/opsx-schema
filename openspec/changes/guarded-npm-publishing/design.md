@@ -52,3 +52,26 @@ The manual workflow has a default dry-run preflight job with read-only permissio
 ## Open Questions
 
 - The exact first live release date and operator are operational choices for the eventual publish, not prerequisites for planning or dry-run verification.
+
+## Post-publication Registry Visibility Correction
+
+### Goal and Constraints
+
+Release run `36478323177` published `0.1.1` from `7f3daf21c6e083080864af17fae5f06c1f9984bd`, then failed on an immediate registry `E404` while npm processed the package. Subsequent read-only installation, signature audit, and exact-source provenance verification passed. Correct future verification without republishing `0.1.1`, recovering its tag, changing credentials, or weakening provenance checks.
+
+### Selected Implementation
+
+1. U1: Replace the immediate `npm view` in `.github/workflows/release.yml` with a read-only loop bounded by GNU `timeout --kill-after=5s 5m`. Retry only the exact npm `E404` code line, sleep five seconds between reads, and disable npm's own fetch retries with a ten-second request timeout. Query the exact version with fresh registry metadata. Reuse `assertPublishedVersion` from `.github/scripts/release-guard.mjs` before installation; wrong or malformed version output fails without retry. No new dependency or configurable retry framework.
+2. U2: Exercise the actual workflow verification shell in `test/workflow/release-contract.test.ts` with controlled npm responses and a shortened native timeout for deterministic deadline coverage. Prove delayed visibility succeeds, permanent invisibility stops, unrelated registry errors fail immediately, and incorrect versions cannot proceed. Preserve existing signature/provenance rejection tests and one-shot publication policy.
+3. U3: Update `docs/npm-release.md` and root `CHANGELOG.md` after smoke verification. Document the five-minute visibility window, terminal failures, and manual investigation without republishing or automatic tag recovery.
+
+### Verification and Completion
+
+- Run the delayed-visibility regression before changing the workflow, then repeat after the fix.
+- Run focused release and CI tests, `bun run check`, and strict OpenSpec change validation.
+- Smoke the real workflow shell against controlled delayed registry responses, then run read-only verification of published `0.1.1` using npm `11.5.1` and the existing Sigstore guard against its published source SHA. Never invoke publish or tag.
+- Complete when all correction cases pass, strict verification remains intact, and operating docs match observed behavior. Existing task 3.2's protected-main dry-run handoff is not evidence for this local correction.
+
+### Risks and Alternatives
+
+GNU timeout is available on the workflow's Ubuntu runner; its five-second kill grace bounds a hung child after the five-minute deadline. Registry visibility does not prove signatures or provenance, so the subsequent install, audit, bundle verification, and exclusive marker creation remain mandatory. Retry only missing-version reads, not authentication/network errors, signature failures, publication, or tagging. An arbitrary fixed delay wastes time and still races; broad retries hide unrelated failures.

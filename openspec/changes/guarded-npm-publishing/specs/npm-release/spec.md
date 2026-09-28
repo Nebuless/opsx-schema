@@ -30,7 +30,17 @@ Preflight SHALL require the requested version, package version, and tag to match
 - **THEN** it rejects publication with an actionable changelog error
 
 ### Requirement: Protected trusted publication
-Real publication SHALL require the configured protected GitHub release environment and npm trusted publisher, SHALL publish only once with provenance, and SHALL verify the published version and generated provenance before tagging the published commit. A failure after publication SHALL stop without automatic retry or tag and report the published version for manual investigation.
+Real publication SHALL require the configured protected GitHub release environment and npm trusted publisher, SHALL publish only once with provenance, and SHALL verify the published version and generated provenance before tagging the published commit. After successful publication, only exact-version registry reads reporting npm `E404` MAY be retried for up to five minutes. Other registry errors, incorrect version output, visibility timeout, or signature/provenance failures SHALL stop without another publication or tag and report the published version for manual investigation.
+
+#### Scenario: Registry processes a successful publication
+- **GIVEN** npm accepted a publication but its exact version lookup initially reports `E404`
+- **WHEN** the version becomes visible within the five-minute window
+- **THEN** verification continues with the exact version and strict signature/provenance checks, without another publication
+
+#### Scenario: Registry visibility does not recover
+- **GIVEN** npm accepted a publication but exact-version reads remain missing through the deadline or return another error
+- **WHEN** the visibility wait fails
+- **THEN** no installation, verification marker, tag, or second publish occurs, and the operator is told to investigate the published version
 
 #### Scenario: Provenance verification fails after publication
 - **GIVEN** npm accepted a publication but provenance verification did not pass

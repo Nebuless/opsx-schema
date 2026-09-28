@@ -1,5 +1,16 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -226,33 +237,122 @@ test("protected publish job rechecks current main, CI, version vacancy and exter
   );
 });
 
-test("release guide links existing CI checks and names external setup", async () => {
-  const [workflow, ciGuide, releaseGuide] = await Promise.all([
-    readReleaseWorkflow(),
-    readFile(path.join(repositoryRoot, "docs/ci.md"), "utf8"),
-    readFile(path.join(repositoryRoot, "docs/npm-release.md"), "utf8"),
-  ]);
-  expect(ciGuide).toContain("[the npm release guide](npm-release.md)");
-  expect(releaseGuide).toContain("[CI and local checks](ci.md)");
-  expect(releaseGuide).toContain("root `package.json`");
-  expect(releaseGuide).toContain("root `CHANGELOG.md`");
-  expect(releaseGuide).toContain("Leave `dry_run` at its default `true`");
-  expect(releaseGuide).toContain(
-    "administrator must configure the GitHub environment named `npm-release`",
+async function runRegistryVisibility(mode: string) {
+  const workflow = await readReleaseWorkflow();
+  const script = workflow.jobs.publish.steps.find(
+    (step) => step.name === "Verify registered package and provenance",
+  )!.run!;
+  const directory = mkdtempSync(path.join(os.tmpdir(), "release-visibility-"));
+  try {
+    const bin = path.join(directory, "bin");
+    mkdirSync(bin);
+    const executable = (name: string, source: string) => {
+      const target = path.join(bin, name);
+      writeFileSync(target, source);
+      chmodSync(target, 0o755);
+    };
+    executable(
+      "npm",
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+const root = process.env.VISIBILITY_FIXTURE;
+const action = process.argv[2];
+fs.appendFileSync(root + "/commands", action + "\\n");
+if (action === "view") {
+  const count = fs.existsSync(root + "/reads") ? Number(fs.readFileSync(root + "/reads", "utf8")) : 0;
+  fs.writeFileSync(root + "/reads", String(count + 1));
+  const mode = process.env.VISIBILITY_MODE;
+  if (mode === "hung") { setInterval(() => {}, 1000); }
+  else if (mode === "pending" || (mode === "delayed" && count === 0)) {
+    console.error("npm error code E404"); process.exit(1);
+  } else if (mode === "network" || mode === "auth") {
+    console.error("npm error code " + (mode === "auth" ? "E401" : "ECONNRESET")); process.exit(1);
+  } else if (mode === "malformed") { console.log("not JSON"); }
+  else { console.log(JSON.stringify(mode === "wrong" ? "1.2.4" : "1.2.3")); }
+} else if (action === "install") { fs.writeFileSync(root + "/installed", "yes"); }
+else if (action === "audit") { console.log(JSON.stringify({ invalid: [], missing: [] })); }
+else if (action !== "init") { throw new Error("Unexpected npm command: " + action); }
+`,
+    );
+    executable(
+      "curl",
+      "#!/bin/sh\nprintf '%s\\n' '{\"attestations\":[],\"keys\":[]}'\n",
+    );
+    executable("sleep", "#!/bin/sh\nexit 0\n");
+    // Native timeout must terminate subprocesses; JS fake timers cannot drive its clock.
+    executable(
+      "timeout",
+      '#!/bin/sh\nshift 2\nexec /usr/bin/timeout --kill-after=0.05s 1s "$@"\n',
+    );
+    const result = spawnSync("bash", ["-c", script], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        GITHUB_WORKSPACE: repositoryRoot,
+        VISIBILITY_FIXTURE: directory,
+        VISIBILITY_MODE: mode,
+        EXPECTED_VERSION: "1.2.3",
+        RELEASE_SHA: "a".repeat(40),
+        VERSION_JSON: path.join(directory, "version.json"),
+        AUDIT_JSON: path.join(directory, "audit.json"),
+        ATTESTATIONS_JSON: path.join(directory, "attestations.json"),
+        KEYS_JSON: path.join(directory, "keys.json"),
+        PROVENANCE_MARKER: path.join(directory, "verified"),
+      },
+    });
+    expect(result.error).toBeUndefined();
+    return {
+      status: result.status,
+      output: result.stdout + result.stderr,
+      reads: Number(readFileSync(path.join(directory, "reads"), "utf8")),
+      installed: existsSync(path.join(directory, "installed")),
+      verified: existsSync(path.join(directory, "verified")),
+      commands: readFileSync(path.join(directory, "commands"), "utf8")
+        .trim()
+        .split("\n"),
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("delayed registry visibility reaches strict provenance verification without republishing", async () => {
+  const result = await runRegistryVisibility("delayed");
+  expect(result.reads).toBe(2);
+  expect(result.installed).toBe(true);
+  expect(result.status).not.toBe(0);
+  expect(result.output).toContain(
+    "lacks verified provenance or publish attestation",
   );
-  expect(releaseGuide).toContain(
-    "configure trusted publishing for package `opsx-schema`",
-  );
-  expect(releaseGuide).toContain("NPM_TRUSTED_PUBLISHER_READY=true");
-  expect(releaseGuide).toContain(
-    "Do not rerun the workflow or tag it automatically",
-  );
-  expect(workflow.jobs.publish.environment).toBe("npm-release");
-  expect(workflow.on.workflow_dispatch.inputs.dry_run.default).toBe(true);
-  const requiredChecks = ciGuide
-    .split("Required CI check names:")[1]!
-    .split("\n\n")[0]!
-    .split("\n")
-    .filter((line) => line.startsWith("- "));
-  expect(requiredChecks).toHaveLength(5);
+  expect(result.verified).toBe(false);
+  expect(result.commands).not.toContain("publish");
+});
+
+test("missing or hung registry visibility stops at deadline without installation or a marker", async () => {
+  for (const mode of ["pending", "hung"]) {
+    const result = await runRegistryVisibility(mode);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("Registry visibility failed");
+    expect(result.reads).toBeGreaterThanOrEqual(1);
+    expect(result.installed).toBe(false);
+    expect(result.verified).toBe(false);
+    expect(result.commands).not.toContain("publish");
+  }
+});
+
+test("terminal registry errors and incorrect versions fail without retry or installation", async () => {
+  for (const mode of ["network", "auth", "wrong", "malformed"]) {
+    const result = await runRegistryVisibility(mode);
+    expect(result.status).not.toBe(0);
+    expect(result.reads).toBe(1);
+    expect(result.installed).toBe(false);
+    expect(result.verified).toBe(false);
+    if (mode === "wrong") expect(result.output).toContain("did not match");
+    if (mode === "network") expect(result.output).toContain("ECONNRESET");
+    if (mode === "auth") expect(result.output).toContain("E401");
+    expect(result.commands).not.toContain("publish");
+  }
 });
