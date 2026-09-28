@@ -157,6 +157,7 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
           VERSION_JSON: ${{ runner.temp }}/published-version.json
           AUDIT_JSON: ${{ runner.temp }}/signatures.json
+          ATTESTATIONS_JSON: ${{ runner.temp }}/attestations.json
           PROVENANCE_MARKER: ${{ runner.temp }}/verified-release-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
@@ -166,7 +167,8 @@ jobs:
           cd "$verify_directory"
           npm init --yes >/dev/null
           npm install --ignore-scripts --no-audit --no-fund --save-exact "opsx-schema@$EXPECTED_VERSION"
-          npm audit signatures --json --include-attestations > "$AUDIT_JSON"
+          npm audit signatures --json > "$AUDIT_JSON"
+          curl --fail --silent --show-error "https://registry.npmjs.org/-/npm/v1/attestations/opsx-schema@$EXPECTED_VERSION" > "$ATTESTATIONS_JSON"
           node "$GITHUB_WORKSPACE/.github/scripts/release-guard.mjs" verify
       - name: Create and push verified tag
         if: success()

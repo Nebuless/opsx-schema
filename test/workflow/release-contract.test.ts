@@ -188,9 +188,8 @@ test("publication happens once, verification precedes tagging, and failure repor
   expect(
     commands.match(/npm publish --provenance --access public/g),
   ).toHaveLength(1);
-  expect(commands).toContain(
-    "npm audit signatures --json --include-attestations",
-  );
+  expect(commands).toContain("npm audit signatures --json");
+
   expect(commands).toContain(
     "npm install --ignore-scripts --no-audit --no-fund --save-exact",
   );

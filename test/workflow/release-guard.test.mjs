@@ -436,51 +436,42 @@ function attestation(predicateType, statement) {
   };
 }
 
-function verifiedAudit(version, sha) {
+function registryAttestations(version, sha) {
   const provenanceType = "https://slsa.dev/provenance/v1";
   const publishType =
     "https://github.com/npm/attestation/tree/main/specs/publish/v0.1";
   return {
-    invalid: [],
-    missing: [],
-    verified: [
-      {
-        name: "opsx-schema",
-        version,
-        registry: "https://registry.npmjs.org/",
-        attestationBundles: [
-          attestation(provenanceType, {
-            predicateType: provenanceType,
-            subject: [{ name: `pkg:npm/opsx-schema@${version}` }],
-            predicate: {
-              buildDefinition: {
-                externalParameters: {
-                  workflow: {
-                    repository: "https://github.com/Nebuless/opsx-schema",
-                    path: ".github/workflows/release.yml",
-                    ref: "refs/heads/main",
-                  },
-                },
-                resolvedDependencies: [
-                  {
-                    uri: "git+https://github.com/Nebuless/opsx-schema@refs/heads/main",
-                    digest: { gitCommit: sha },
-                  },
-                ],
-              },
-              runDetails: {
-                builder: {
-                  id: "https://github.com/actions/runner/github-hosted",
-                },
+    attestations: [
+      attestation(provenanceType, {
+        predicateType: provenanceType,
+        subject: [{ name: `pkg:npm/opsx-schema@${version}` }],
+        predicate: {
+          buildDefinition: {
+            externalParameters: {
+              workflow: {
+                repository: "https://github.com/Nebuless/opsx-schema",
+                path: ".github/workflows/release.yml",
+                ref: "refs/heads/main",
               },
             },
-          }),
-          attestation(publishType, {
-            predicateType: publishType,
-            predicate: { name: "opsx-schema", version },
-          }),
-        ],
-      },
+            resolvedDependencies: [
+              {
+                uri: "git+https://github.com/Nebuless/opsx-schema@refs/heads/main",
+                digest: { gitCommit: sha },
+              },
+            ],
+          },
+          runDetails: {
+            builder: {
+              id: "https://github.com/actions/runner/github-hosted",
+            },
+          },
+        },
+      }),
+      attestation(publishType, {
+        predicateType: publishType,
+        predicate: { name: "opsx-schema", version },
+      }),
     ],
   };
 }
@@ -492,26 +483,46 @@ test("registry version and verified provenance identify the exact release", () =
   );
   expect(() =>
     assertVerifiedProvenance(
-      verifiedAudit("1.2.3", releaseSha),
+      { invalid: [], missing: [] },
+      registryAttestations("1.2.3", releaseSha),
       "1.2.3",
       releaseSha,
     ),
   ).not.toThrow();
   expect(() =>
     assertVerifiedProvenance(
-      verifiedAudit("1.2.3", releaseSha),
+      { invalid: [], missing: [] },
+      registryAttestations("1.2.3", releaseSha),
       "1.2.3",
       "b".repeat(40),
     ),
   ).toThrow("workflow and commit");
-  const missingPublish = verifiedAudit("1.2.3", releaseSha);
-  missingPublish.verified[0].attestationBundles.pop();
+  const missingPublish = registryAttestations("1.2.3", releaseSha);
+  missingPublish.attestations.pop();
   expect(() =>
-    assertVerifiedProvenance(missingPublish, "1.2.3", releaseSha),
+    assertVerifiedProvenance(
+      { invalid: [], missing: [] },
+      missingPublish,
+      "1.2.3",
+      releaseSha,
+    ),
   ).toThrow("lacks verified provenance or publish attestation");
-  const wrongWorkflow = verifiedAudit("1.2.3", releaseSha);
-  const payload =
-    wrongWorkflow.verified[0].attestationBundles[0].bundle.dsseEnvelope;
+  for (const audit of [
+    { invalid: [{ name: "opsx-schema" }], missing: [] },
+    { invalid: [], missing: [{ name: "opsx-schema" }] },
+    {},
+  ]) {
+    expect(() =>
+      assertVerifiedProvenance(
+        audit,
+        registryAttestations("1.2.3", releaseSha),
+        "1.2.3",
+        releaseSha,
+      ),
+    ).toThrow("Signature audit did not verify");
+  }
+  const wrongWorkflow = registryAttestations("1.2.3", releaseSha);
+  const payload = wrongWorkflow.attestations[0].bundle.dsseEnvelope;
   const statement = JSON.parse(
     Buffer.from(payload.payload, "base64").toString("utf8"),
   );
@@ -519,7 +530,12 @@ test("registry version and verified provenance identify the exact release", () =
     ".github/workflows/other.yml";
   payload.payload = Buffer.from(JSON.stringify(statement)).toString("base64");
   expect(() =>
-    assertVerifiedProvenance(wrongWorkflow, "1.2.3", releaseSha),
+    assertVerifiedProvenance(
+      { invalid: [], missing: [] },
+      wrongWorkflow,
+      "1.2.3",
+      releaseSha,
+    ),
   ).toThrow("workflow and commit");
 });
 
@@ -598,6 +614,7 @@ test("post-publication verification failure leaves no marker for tagging", () =>
   try {
     const versionFile = path.join(directory, "version.json");
     const auditFile = path.join(directory, "audit.json");
+    const attestationsFile = path.join(directory, "attestations.json");
     const marker = path.join(directory, "verified");
     const helper = path.join(
       repositoryRoot,
@@ -607,22 +624,27 @@ test("post-publication verification failure leaves no marker for tagging", () =>
       ...process.env,
       VERSION_JSON: versionFile,
       AUDIT_JSON: auditFile,
+      ATTESTATIONS_JSON: attestationsFile,
       PROVENANCE_MARKER: marker,
       EXPECTED_VERSION: "1.2.3",
       RELEASE_SHA: releaseSha,
     };
     writeFileSync(versionFile, JSON.stringify(["1.2.3"]));
-    writeFileSync(auditFile, JSON.stringify({ verified: [] }));
+    writeFileSync(auditFile, JSON.stringify({ invalid: [], missing: [] }));
+    writeFileSync(attestationsFile, JSON.stringify({ attestations: [] }));
     const noAttestation = spawnSync("node", [helper, "verify"], {
       encoding: "utf8",
       env: environment,
     });
     expect(noAttestation.status).not.toBe(0);
-    expect(noAttestation.stderr).toContain("no verified npm attestations");
+    expect(noAttestation.stderr).toContain(
+      "lacks verified provenance or publish attestation",
+    );
     expect(existsSync(marker)).toBe(false);
+    writeFileSync(auditFile, JSON.stringify({ invalid: [], missing: [] }));
     writeFileSync(
-      auditFile,
-      JSON.stringify(verifiedAudit("1.2.3", releaseSha)),
+      attestationsFile,
+      JSON.stringify(registryAttestations("1.2.3", releaseSha)),
     );
     writeFileSync(versionFile, JSON.stringify(["1.2.4"]));
     const wrongVersion = spawnSync("node", [helper, "verify"], {
