@@ -124,6 +124,34 @@ export function assertProtectedReleaseEnvironment(environment) {
   }
 }
 
+function visibleReleaseMarkdown(changelog) {
+  const withoutComments = changelog.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
+  const visibleLines = [];
+  let openFence;
+  for (const line of withoutComments.split(/\r?\n/)) {
+    const fence = line.trim().match(/^(`{3,}|~{3,})(.*)$/);
+    if (openFence) {
+      if (
+        fence &&
+        fence[1][0] === openFence[0] &&
+        fence[1].length >= openFence.length &&
+        !fence[2].trim()
+      ) {
+        openFence = undefined;
+      }
+      visibleLines.push("");
+      continue;
+    }
+    if (fence) {
+      openFence = fence[1];
+      visibleLines.push("");
+      continue;
+    }
+    visibleLines.push(/^(?: {4}|\t)/.test(line) ? "" : line);
+  }
+  return visibleLines.join("\n");
+}
+
 export function assertReleaseMetadata(environment, packageManifest, changelog) {
   const version = environment.EXPECTED_VERSION;
   if (!VERSION_PATTERN.test(version)) {
@@ -139,7 +167,7 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
     throw new Error("Package name and version must match the requested release");
   }
 
-  const visibleChangelog = changelog.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
+  const visibleChangelog = visibleReleaseMarkdown(changelog);
   const headings = [...visibleChangelog.matchAll(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})\s*$/gm)];
   const matching = headings.filter((heading) => heading[1] === version);
   if (matching.length !== 1) {
@@ -161,11 +189,16 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
     if (!trimmed || /^#{1,6}\s/.test(trimmed)) {
       return false;
     }
-    const listText = trimmed.replace(/^(?:[-*+]\s*|\d+\.\s*)/, "").trim();
+    const quotedText = trimmed.replace(/^(?:>\s*)+/, "");
+    const listText = quotedText.replace(/^(?:[-*+]\s*|\d+\.\s*)/, "").trim();
     if (/^\[ \](?:\s|$)/.test(listText)) {
       return false;
     }
-    const note = listText.replace(/^\[[xX]\]\s*/, "").trim();
+    const note = listText
+      .replace(/^\[[xX]\]\s*/, "")
+      .replace(/!?\[([^\]]*)\]\([^)]+\)/g, "$1")
+      .replace(/<[^>]*>/g, "")
+      .trim();
     return Boolean(
       /[\p{L}\p{N}]/u.test(note) &&
       !/^#{1,6}\s/.test(note) &&

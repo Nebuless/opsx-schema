@@ -347,12 +347,24 @@ test("empty, heading-only, and placeholder release entries fail before the next 
     "- - -\n",
     "```js\n```\n",
     "~~~text\n~~~\n",
+    "> TODO: notes\n",
+    "> - TODO: notes\n",
+    "- <br>\n",
+    "- [x] <br>\n",
+    "- [](https://example.com)\n",
   ]) {
     const changelog = `## [1.2.3] - 2026-09-28\n${body}\n## [1.2.2] - 2026-09-01\n- Existing notes`;
     expect(() =>
       assertReleaseMetadata(environment, manifest, changelog),
     ).toThrow("substantive release notes");
   }
+  expect(() =>
+    assertReleaseMetadata(
+      environment,
+      manifest,
+      "```md\n## [1.2.3] - 2026-09-28\n- Example change\n```\n## [1.2.2] - 2026-09-01\n- Existing notes",
+    ),
+  ).toThrow("dated matching version entry");
 });
 
 test("tag and registry lookups distinguish existing versions from outages", () => {
