@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commit-history:
+    name: Commit history
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Validate commit range
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+            test -n "$base"
+            test -n "$head"
+            merge_base="$(git merge-base "$base" "$head")"
+            bun run commitlint:range --from "$merge_base" --to "$head"
+          else
+            base="$PUSH_BEFORE_SHA"
+            head="$PUSH_HEAD_SHA"
+            test -n "$head"
+            if [[ "$base" =~ ^0+$ ]]; then
+              root="$(git rev-list --max-parents=0 "$head" | tail -n 1)"
+              git show -s --format=%B "$root" | bun run commitlint
+              if [[ "$head" != "$root" ]]; then
+                bun run commitlint:range --from "$root" --to "$head"
+              fi
+            else
+              test -n "$base"
+              bun run commitlint:range --from "$base" --to "$head"
+            fi
+          fi
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install Qlty CLI 0.644.0
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/qlty.tar.xz"
+          curl --fail --location --silent --show-error "https://github.com/qltysh/qlty/releases/download/v0.644.0/qlty-x86_64-unknown-linux-gnu.tar.xz" --output "$archive"
+          echo "0c080c85c7b13da93956482002e5b02eb943fdd61014ad894b5d47b19982b5c7  $archive" | sha256sum --check
+          member="$(tar -tJf "$archive" | awk '/(^|\/)qlty$/ { print; exit }')"
+          test -n "$member"
+          tar -xJOf "$archive" "$member" > "$RUNNER_TEMP/qlty"
+          chmod 755 "$RUNNER_TEMP/qlty"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/qlty" --version
+      - name: Check formatting, lint, complexity, duplication, and types
+        run: bun run format:check && bun run lint && bun run qlty:check && bun run typecheck
+
+  application-tests:
+    name: Application tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install OpenSpec 1.12.0
+        run: bun install --global @fission-ai/openspec@1.12.0
+      - name: Add OpenSpec to PATH
+        run: echo "$(bun pm bin -g)" >> "$GITHUB_PATH"
+      - name: Verify OpenSpec version
+        run: test "$(openspec --version)" = "1.12.0"
+      - name: Run application tests
+        run: bun run test:application
+
+  resource-checks:
+    name: Resource checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install OpenSpec 1.12.0
+        run: bun install --global @fission-ai/openspec@1.12.0
+      - name: Add OpenSpec to PATH
+        run: echo "$(bun pm bin -g)" >> "$GITHUB_PATH"
+      - name: Verify OpenSpec version
+        run: test "$(openspec --version)" = "1.12.0"
+      - name: Validate resources
+        run: bun run test:schemas
+
+  distribution-smoke:
+    name: Package distribution smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install OpenSpec 1.12.0
+        run: bun install --global @fission-ai/openspec@1.12.0
+      - name: Add OpenSpec to PATH
+        run: echo "$(bun pm bin -g)" >> "$GITHUB_PATH"
+      - name: Verify OpenSpec version
+        run: test "$(openspec --version)" = "1.12.0"
+      - name: Test packed package
+        run: bun run test:distribution

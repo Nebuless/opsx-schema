@@ -1,0 +1,36 @@
+config_version = "0"
+
+exclude_patterns = [
+  "**/.git/**",
+  "**/.qlty/**",
+  "**/node_modules/**",
+  "**/vendor/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/generated/**",
+  "**/coverage/**",
+  "**/resources/.agents/**",
+  "**/resources/.atomic/**",
+  "**/resources/.claude/**",
+  "**/resources/.codex/**",
+  "**/resources/.omp/**",
+  "**/resources/.opencode/**",
+  "**/resources/.pi/**",
+  "**/resources/.senpi/**",
+  "**/resources/openspec/**",
+  "**/resources/docs/**",
+  "**/assets/**",
+  "**/skills/**",
+  "**/*.d.ts",
+  "**/bun.lock",
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/yarn.lock",
+]
+
+[smells]
+mode = "comment"
+
+[[source]]
+name = "default"
+default = true

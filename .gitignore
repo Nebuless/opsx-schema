@@ -44,7 +44,6 @@ opentui-stdin*.bin
 /.omp/
 /.openspec/
 /.pi/
-/.qlty/
 /.trunk/
 /backlog/
 /benchmarks/
@@ -61,3 +60,9 @@ opentui-stdin*.bin
 # Resource-local legacy project records are not part of this curated public source.
 /resources/openspec/changes/archive/
 /resources/openspec/specs/
+
+# Qlty-generated runtime state
+/.qlty/logs
+/.qlty/out
+/.qlty/plugin_cachedir
+/.qlty/results
