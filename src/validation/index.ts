@@ -1,4 +1,13 @@
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
@@ -6,9 +15,21 @@ import { changeDirectory } from "../archive/index.ts";
 import { OpsxError, resolveProject } from "../domain/project.ts";
 import { OpenSpecClient } from "../openspec/client.ts";
 import type { OpenSpecCommandResult } from "../openspec/client.ts";
-import { changeHistory, readProvenance, type Provenance } from "../provenance/index.ts";
-import { checkRevision, inspectRetainedRevision, resolveRevision } from "../revisions/index.ts";
-import type { Revision, RevisionCheck, RevisionRef } from "../revisions/index.ts";
+import {
+  changeHistory,
+  readProvenance,
+  type Provenance,
+} from "../provenance/index.ts";
+import {
+  checkRevision,
+  inspectRetainedRevision,
+  resolveRevision,
+} from "../revisions/index.ts";
+import type {
+  Revision,
+  RevisionCheck,
+  RevisionRef,
+} from "../revisions/index.ts";
 
 export interface ValidationFinding {
   code: string;
@@ -35,77 +56,139 @@ interface Context {
   blocked: boolean;
 }
 
-
-type SchemaSource = { kind: "current"; revision: Revision } | { kind: "retained"; revision: RevisionRef } | { kind: "directory"; root: string };
+type SchemaSource =
+  | { kind: "current"; revision: Revision }
+  | { kind: "retained"; revision: RevisionRef }
+  | { kind: "directory"; root: string };
 
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const MAX_COPIED_ENTRIES = 2_000;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
-function latestRevision(provenance: Provenance | null): RevisionRef | undefined {
-  return provenance?.migrations.at(-1)?.to ?? provenance?.retained ?? provenance?.created ?? undefined;
+function latestRevision(
+  provenance: Provenance | null,
+): RevisionRef | undefined {
+  return (
+    provenance?.migrations.at(-1)?.to ??
+    provenance?.retained ??
+    provenance?.created ??
+    undefined
+  );
 }
 
-function revisionFor(provenance: Provenance | null, name: string): RevisionRef | undefined {
+function revisionFor(
+  provenance: Provenance | null,
+  name: string,
+): RevisionRef | undefined {
   if (!provenance) return undefined;
   const candidates = [
     provenance.migrations.at(-1)?.to,
     provenance.retained,
     provenance.created,
-    ...provenance.migrations.flatMap(migration => [migration.to, migration.from]),
+    ...provenance.migrations.flatMap((migration) => [
+      migration.to,
+      migration.from,
+    ]),
   ];
-  return candidates.find((candidate): candidate is RevisionRef => candidate?.name === name);
+  return candidates.find(
+    (candidate): candidate is RevisionRef => candidate?.name === name,
+  );
 }
 
-function add(context: Context, finding: ValidationFinding, blocks = true): void {
+function add(
+  context: Context,
+  finding: ValidationFinding,
+  blocks = true,
+): void {
   context.findings.push(finding);
   if (blocks) context.blocked = true;
 }
 
-function reportShadows(context: Context, change: string, revision: Revision | undefined): void {
+function reportShadows(
+  context: Context,
+  change: string,
+  revision: Revision | undefined,
+): void {
   if (!revision?.shadows.length) return;
-  add(context, {
-    code: "SCHEMA_SHADOWS_PRESENT",
-    severity: "warning",
-    message: `OpenSpec reports ${revision.shadows.length} shadowed schema source(s); the selected source is ${revision.source}.`,
-    path: projectPath(change, ".openspec.yaml"),
-  }, false);
+  add(
+    context,
+    {
+      code: "SCHEMA_SHADOWS_PRESENT",
+      severity: "warning",
+      message: `OpenSpec reports ${revision.shadows.length} shadowed schema source(s); the selected source is ${revision.source}.`,
+      path: projectPath(change, ".openspec.yaml"),
+    },
+    false,
+  );
 }
 
 function projectPath(change: string, relative?: string): string {
   if (!SAFE_NAME.test(change)) return "openspec/changes";
-  return path.posix.join("openspec", "changes", change, ...(relative ? relative.split(/[\\/]+/) : []));
+  return path.posix.join(
+    "openspec",
+    "changes",
+    change,
+    ...(relative ? relative.split(/[\\/]+/) : []),
+  );
 }
 
 function safeArtifactPath(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value || value.includes("*")) return undefined;
+  if (typeof value !== "string" || !value || value.includes("*"))
+    return undefined;
   const normalized = value.replaceAll("\\", "/");
-  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.split("/").some(part => part === ".." || part === "." || part === "")) return undefined;
+  if (
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized
+      .split("/")
+      .some((part) => part === ".." || part === "." || part === "")
+  )
+    return undefined;
   return normalized;
 }
 
-
-function openSpecIssuePath(change: string, issuePath: unknown): string | undefined {
-  if (typeof issuePath !== "string" || !issuePath.trim() || issuePath === "file") return undefined;
+function openSpecIssuePath(
+  change: string,
+  issuePath: unknown,
+): string | undefined {
+  if (
+    typeof issuePath !== "string" ||
+    !issuePath.trim() ||
+    issuePath === "file"
+  )
+    return undefined;
   const normalized = issuePath.replaceAll("\\", "/");
-  if (path.isAbsolute(normalized) || normalized.split("/").some(part => part === "..")) return undefined;
-  const relative = normalized.startsWith("specs/") || ["proposal.md", "design.md", "tasks.md"].includes(normalized)
-    ? normalized
-    : path.posix.join("specs", normalized);
+  if (
+    path.isAbsolute(normalized) ||
+    normalized.split("/").some((part) => part === "..")
+  )
+    return undefined;
+  const relative =
+    normalized.startsWith("specs/") ||
+    ["proposal.md", "design.md", "tasks.md"].includes(normalized)
+      ? normalized
+      : path.posix.join("specs", normalized);
   return projectPath(change, relative);
 }
 
-function readValidationResult(change: string, result: OpenSpecCommandResult, context: Context): void {
+function readValidationResult(
+  change: string,
+  result: OpenSpecCommandResult,
+  context: Context,
+): void {
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.stdout);
   } catch {
-    const detail = result.stderr.trim() || result.stdout.trim() || `OpenSpec exited with status ${result.status}.`;
+    const detail =
+      result.stderr.trim() ||
+      result.stdout.trim() ||
+      `OpenSpec exited with status ${result.status}.`;
     add(context, {
       code: "OPENSPEC_RESULT_UNKNOWN",
       severity: "warning",
@@ -117,57 +200,118 @@ function readValidationResult(change: string, result: OpenSpecCommandResult, con
 
   const payload = asRecord(parsed);
   const items = payload && Array.isArray(payload.items) ? payload.items : [];
-  const item = items.map(asRecord).find(value => value?.id === change && value.type === "change")
-    ?? items.map(asRecord).find(value => value?.type === "change");
+  const item =
+    items
+      .map(asRecord)
+      .find((value) => value?.id === change && value.type === "change") ??
+    items.map(asRecord).find((value) => value?.type === "change");
   if (!item || typeof item.valid !== "boolean") {
     add(context, {
       code: "OPENSPEC_RESULT_UNKNOWN",
       severity: "warning",
-      message: "OpenSpec returned JSON without a recognizable change-validation result.",
+      message:
+        "OpenSpec returned JSON without a recognizable change-validation result.",
       path: projectPath(change),
     });
     return;
   }
 
-  const issues = Array.isArray(item.issues) ? item.issues.map(asRecord).filter((value): value is Record<string, unknown> => value !== undefined) : [];
+  const issues = Array.isArray(item.issues)
+    ? item.issues
+        .map(asRecord)
+        .filter(
+          (value): value is Record<string, unknown> => value !== undefined,
+        )
+    : [];
   for (const issue of issues) {
-    const level = typeof issue.level === "string" ? issue.level.toUpperCase() : "ERROR";
-    const severity = level === "WARNING" || level === "WARN" ? "warning" : "error";
-    const message = typeof issue.message === "string" ? issue.message : "OpenSpec reported a validation issue.";
+    const level =
+      typeof issue.level === "string" ? issue.level.toUpperCase() : "ERROR";
+    const severity =
+      level === "WARNING" || level === "WARN" ? "warning" : "error";
+    const message =
+      typeof issue.message === "string"
+        ? issue.message
+        : "OpenSpec reported a validation issue.";
     const issuePath = openSpecIssuePath(change, issue.path);
-    add(context, {
-      code: severity === "error" ? "OPENSPEC_INVALID" : "OPENSPEC_WARNING",
-      severity,
-      message,
-      path: issuePath ?? projectPath(change),
-    }, severity === "error");
+    add(
+      context,
+      {
+        code: severity === "error" ? "OPENSPEC_INVALID" : "OPENSPEC_WARNING",
+        severity,
+        message,
+        path: issuePath ?? projectPath(change),
+      },
+      severity === "error",
+    );
   }
-  if (item.valid === false && !issues.some(issue => typeof issue.level === "string" && issue.level.toUpperCase() !== "WARNING" && issue.level.toUpperCase() !== "WARN")) {
-    add(context, { code: "OPENSPEC_INVALID", severity: "error", message: "OpenSpec strict validation rejected the change.", path: projectPath(change) });
+  if (
+    item.valid === false &&
+    !issues.some(
+      (issue) =>
+        typeof issue.level === "string" &&
+        issue.level.toUpperCase() !== "WARNING" &&
+        issue.level.toUpperCase() !== "WARN",
+    )
+  ) {
+    add(context, {
+      code: "OPENSPEC_INVALID",
+      severity: "error",
+      message: "OpenSpec strict validation rejected the change.",
+      path: projectPath(change),
+    });
   }
   if (result.status !== 0 && item.valid === true) {
-    add(context, { code: "OPENSPEC_EXIT_FAILURE", severity: "error", message: `OpenSpec strict validation exited with status ${result.status}.`, path: projectPath(change) });
+    add(context, {
+      code: "OPENSPEC_EXIT_FAILURE",
+      severity: "error",
+      message: `OpenSpec strict validation exited with status ${result.status}.`,
+      path: projectPath(change),
+    });
   }
 }
 
-async function copyTree(source: string, destination: string, counter = { entries: 0 }): Promise<void> {
+async function copyTree(
+  source: string,
+  destination: string,
+  counter = { entries: 0 },
+): Promise<void> {
   const info = await lstat(source);
-  if (info.isSymbolicLink()) throw new OpsxError("VALIDATION_UNSAFE", `Refusing to follow symlink in validation input: ${source}`);
+  if (info.isSymbolicLink())
+    throw new OpsxError(
+      "VALIDATION_UNSAFE",
+      `Refusing to follow symlink in validation input: ${source}`,
+    );
   if (info.isDirectory()) {
     await mkdir(destination, { recursive: true });
     for (const entry of await readdir(source, { withFileTypes: true })) {
       counter.entries += 1;
-      if (counter.entries > MAX_COPIED_ENTRIES) throw new OpsxError("VALIDATION_LIMIT", "Validation input contains too many entries.");
-      await copyTree(path.join(source, entry.name), path.join(destination, entry.name), counter);
+      if (counter.entries > MAX_COPIED_ENTRIES)
+        throw new OpsxError(
+          "VALIDATION_LIMIT",
+          "Validation input contains too many entries.",
+        );
+      await copyTree(
+        path.join(source, entry.name),
+        path.join(destination, entry.name),
+        counter,
+      );
     }
     return;
   }
-  if (!info.isFile()) throw new OpsxError("VALIDATION_UNSAFE", `Unsupported validation input: ${source}`);
+  if (!info.isFile())
+    throw new OpsxError(
+      "VALIDATION_UNSAFE",
+      `Unsupported validation input: ${source}`,
+    );
   await mkdir(path.dirname(destination), { recursive: true });
   await copyFile(source, destination);
 }
 
-async function copyRetainedRevision(root: string, revision: RevisionRef, destination: string): Promise<void> {
+async function copyRetainedRevision(
+  root: string,
+  revision: RevisionRef,
+  destination: string,
+): Promise<void> {
   const snapshot = await inspectRetainedRevision(root, revision);
   await mkdir(destination, { recursive: true });
   for (const relative of snapshot.files) {
@@ -178,7 +322,10 @@ async function copyRetainedRevision(root: string, revision: RevisionRef, destina
   }
 }
 
-async function copyProjectSpecs(root: string, destination: string): Promise<void> {
+async function copyProjectSpecs(
+  root: string,
+  destination: string,
+): Promise<void> {
   try {
     await copyTree(path.join(root, "openspec", "specs"), destination);
   } catch (error) {
@@ -186,17 +333,33 @@ async function copyProjectSpecs(root: string, destination: string): Promise<void
   }
 }
 
-async function buildFixture(context: Context, change: string, schemaName: string, source: SchemaSource): Promise<string> {
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "opsx-validation-"));
+async function buildFixture(
+  context: Context,
+  change: string,
+  schemaName: string,
+  source: SchemaSource,
+): Promise<string> {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "opsx-validation-"),
+  );
   try {
     const openspecRoot = path.join(temporaryRoot, "openspec");
     const schemaTarget = path.join(openspecRoot, "schemas", schemaName);
     const changeTarget = path.join(openspecRoot, "changes", change);
     await mkdir(path.join(openspecRoot, "changes"), { recursive: true });
     await mkdir(path.join(openspecRoot, "schemas"), { recursive: true });
-    await writeFile(path.join(openspecRoot, "config.yaml"), YAML.stringify({ schema: schemaName }), { flag: "wx" });
-    if (source.kind === "retained") await copyRetainedRevision(context.root, source.revision, schemaTarget);
-    else await copyTree(source.kind === "current" ? source.revision.source : source.root, schemaTarget);
+    await writeFile(
+      path.join(openspecRoot, "config.yaml"),
+      YAML.stringify({ schema: schemaName }),
+      { flag: "wx" },
+    );
+    if (source.kind === "retained")
+      await copyRetainedRevision(context.root, source.revision, schemaTarget);
+    else
+      await copyTree(
+        source.kind === "current" ? source.revision.source : source.root,
+        schemaTarget,
+      );
     await copyProjectSpecs(context.root, path.join(openspecRoot, "specs"));
     await copyTree(context.directory, changeTarget);
 
@@ -205,7 +368,11 @@ async function buildFixture(context: Context, change: string, schemaName: string
     try {
       const parsed = YAML.parse(await readFile(metadataPath, "utf8"));
       const value = asRecord(parsed);
-      if (parsed !== null && parsed !== undefined && !value) throw new OpsxError("CHANGE_METADATA", "Change metadata must be a mapping.");
+      if (parsed !== null && parsed !== undefined && !value)
+        throw new OpsxError(
+          "CHANGE_METADATA",
+          "Change metadata must be a mapping.",
+        );
       metadata = value ?? {};
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -229,20 +396,32 @@ async function prepareContext(root: string, change: string): Promise<Context> {
     findings: [],
     blocked: false,
   };
-  const fail = (code: string, message: string, filePath?: string) => add(context, { code, severity: "error", message, ...(filePath ? { path: filePath } : {}) });
+  const fail = (code: string, message: string, filePath?: string) =>
+    add(context, {
+      code,
+      severity: "error",
+      message,
+      ...(filePath ? { path: filePath } : {}),
+    });
   try {
     context.root = await resolveProject(root, true);
     context.directory = await changeDirectory(context.root, change);
     const history = await changeHistory(context.root, change);
     const provenance = await readProvenance(context.directory);
     const latest = latestRevision(provenance);
-    context.schema = history.inherited ? latest?.name ?? history.currentSchema : history.currentSchema;
+    context.schema = history.inherited
+      ? (latest?.name ?? history.currentSchema)
+      : history.currentSchema;
     context.revision = revisionFor(provenance, context.schema);
     context.client = new OpenSpecClient(context.root);
     context.client.ensureSupported();
 
     if (context.schema === "Unknown" || !SAFE_NAME.test(context.schema)) {
-      fail("SCHEMA_UNKNOWN", "The change's effective schema could not be resolved.", projectPath(change));
+      fail(
+        "SCHEMA_UNKNOWN",
+        "The change's effective schema could not be resolved.",
+        projectPath(change),
+      );
       return context;
     }
     if (!provenance || !context.revision) {
@@ -254,21 +433,36 @@ async function prepareContext(root: string, change: string): Promise<Context> {
       });
     }
     if (!history.inherited && latest && latest.name !== history.currentSchema) {
-      fail("PROVENANCE_DIVERGENCE", history.divergence ?? `Recorded revision ${latest.name} differs from pinned schema ${history.currentSchema}.`, projectPath(change, ".openspec.yaml"));
+      fail(
+        "PROVENANCE_DIVERGENCE",
+        history.divergence ??
+          `Recorded revision ${latest.name} differs from pinned schema ${history.currentSchema}.`,
+        projectPath(change, ".openspec.yaml"),
+      );
     }
     return context;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof OpsxError && error.code === "CHANGE_NOT_FOUND" ? "CHANGE_NOT_FOUND" : "VALIDATION_INPUT_UNKNOWN";
+    const code =
+      error instanceof OpsxError && error.code === "CHANGE_NOT_FOUND"
+        ? "CHANGE_NOT_FOUND"
+        : "VALIDATION_INPUT_UNKNOWN";
     fail(code, message, projectPath(change));
     return context;
   }
 }
 
-async function checkPinnedRevision(context: Context, change: string): Promise<RevisionCheck | undefined> {
+async function checkPinnedRevision(
+  context: Context,
+  change: string,
+): Promise<RevisionCheck | undefined> {
   if (!context.revision) return undefined;
   try {
-    const checked = await checkRevision(context.root, context.revision, context.client);
+    const checked = await checkRevision(
+      context.root,
+      context.revision,
+      context.client,
+    );
     if (!checked.retained) {
       add(context, {
         code: "SCHEMA_REVISION_MISSING",
@@ -278,11 +472,26 @@ async function checkPinnedRevision(context: Context, change: string): Promise<Re
       });
     }
     if (checked.state === "missing") {
-      add(context, { code: "SCHEMA_REVISION_MISSING", severity: "error", message: `The pinned schema revision ${context.revision.name} is no longer resolvable.`, path: projectPath(change, ".openspec.yaml") });
+      add(context, {
+        code: "SCHEMA_REVISION_MISSING",
+        severity: "error",
+        message: `The pinned schema revision ${context.revision.name} is no longer resolvable.`,
+        path: projectPath(change, ".openspec.yaml"),
+      });
     } else if (checked.state === "drift") {
-      add(context, { code: "SCHEMA_REVISION_DRIFT", severity: "error", message: `The current ${context.revision.name} schema differs from the revision pinned by this change.`, path: projectPath(change, ".openspec.yaml") });
+      add(context, {
+        code: "SCHEMA_REVISION_DRIFT",
+        severity: "error",
+        message: `The current ${context.revision.name} schema differs from the revision pinned by this change.`,
+        path: projectPath(change, ".openspec.yaml"),
+      });
     } else if (checked.state === "shadow") {
-      add(context, { code: "SCHEMA_REVISION_SHADOW", severity: "error", message: `The ${context.revision.name} schema now resolves from a different source than the pinned revision.`, path: projectPath(change, ".openspec.yaml") });
+      add(context, {
+        code: "SCHEMA_REVISION_SHADOW",
+        severity: "error",
+        message: `The ${context.revision.name} schema now resolves from a different source than the pinned revision.`,
+        path: projectPath(change, ".openspec.yaml"),
+      });
     }
     reportShadows(context, change, checked.revision);
     return checked;
@@ -297,10 +506,26 @@ async function checkPinnedRevision(context: Context, change: string): Promise<Re
   }
 }
 
-function readStatus(change: string, schemaName: string, status: unknown, context: Context): void {
+function readStatus(
+  change: string,
+  schemaName: string,
+  status: unknown,
+  context: Context,
+): void {
   const value = asRecord(status);
-  if (!value || value.changeName !== change || typeof value.schemaName !== "string" || !Array.isArray(value.artifacts) || typeof value.isPlanningComplete !== "boolean") {
-    add(context, { code: "WORKFLOW_UNKNOWN", severity: "warning", message: "OpenSpec status returned an unrecognized workflow result.", path: projectPath(change) });
+  if (
+    !value ||
+    value.changeName !== change ||
+    typeof value.schemaName !== "string" ||
+    !Array.isArray(value.artifacts) ||
+    typeof value.isPlanningComplete !== "boolean"
+  ) {
+    add(context, {
+      code: "WORKFLOW_UNKNOWN",
+      severity: "warning",
+      message: "OpenSpec status returned an unrecognized workflow result.",
+      path: projectPath(change),
+    });
     return;
   }
   if (value.schemaName !== schemaName) {
@@ -313,16 +538,32 @@ function readStatus(change: string, schemaName: string, status: unknown, context
     return;
   }
   if (value.isPlanningComplete !== true) {
-    const incomplete = value.artifacts.map(asRecord).filter((artifact): artifact is Record<string, unknown> => artifact !== undefined)
-      .filter(artifact => artifact.status !== "done" && artifact.status !== "complete");
-    const names = incomplete.map(artifact => typeof artifact.id === "string" ? artifact.id : undefined).filter(Boolean);
+    const incomplete = value.artifacts
+      .map(asRecord)
+      .filter(
+        (artifact): artifact is Record<string, unknown> =>
+          artifact !== undefined,
+      )
+      .filter(
+        (artifact) =>
+          artifact.status !== "done" && artifact.status !== "complete",
+      );
+    const names = incomplete
+      .map((artifact) =>
+        typeof artifact.id === "string" ? artifact.id : undefined,
+      )
+      .filter(Boolean);
     const artifactPaths = asRecord(value.artifactPaths);
-    const firstMissing = incomplete.find(artifact => {
+    const firstMissing = incomplete.find((artifact) => {
       const id = typeof artifact.id === "string" ? artifact.id : "";
       const paths = asRecord(artifactPaths?.[id]);
-      return Array.isArray(paths?.existingOutputPaths) && paths.existingOutputPaths.length === 0;
+      return (
+        Array.isArray(paths?.existingOutputPaths) &&
+        paths.existingOutputPaths.length === 0
+      );
     });
-    const firstMissingId = typeof firstMissing?.id === "string" ? firstMissing.id : "";
+    const firstMissingId =
+      typeof firstMissing?.id === "string" ? firstMissing.id : "";
     const outputPath = asRecord(artifactPaths?.[firstMissingId])?.outputPath;
     const pathValue = safeArtifactPath(outputPath);
     add(context, {
@@ -334,20 +575,41 @@ function readStatus(change: string, schemaName: string, status: unknown, context
   }
 }
 
-async function runGate(context: Context, targetSchema?: string, targetSchemaRoot?: string): Promise<ValidationResult> {
+async function runGate(
+  context: Context,
+  targetSchema?: string,
+  targetSchemaRoot?: string,
+): Promise<ValidationResult> {
   const change = context.change;
   const schemaName = targetSchema ?? context.schema;
   if (!SAFE_NAME.test(schemaName) || schemaName === "Unknown") {
-    add(context, { code: "SCHEMA_UNKNOWN", severity: "error", message: `Invalid or unresolved schema name: ${schemaName}.`, path: projectPath(change) });
-    return { ok: false, change, schema: schemaName, findings: context.findings };
+    add(context, {
+      code: "SCHEMA_UNKNOWN",
+      severity: "error",
+      message: `Invalid or unresolved schema name: ${schemaName}.`,
+      path: projectPath(change),
+    });
+    return {
+      ok: false,
+      change,
+      schema: schemaName,
+      findings: context.findings,
+    };
   }
 
   let source: SchemaSource;
   try {
     if (targetSchema === undefined) {
-      const checked = context.revision ? await checkPinnedRevision(context, change) : undefined;
+      const checked = context.revision
+        ? await checkPinnedRevision(context, change)
+        : undefined;
       if (context.revision && (!checked || !checked.retained)) {
-        return { ok: false, change, schema: schemaName, findings: context.findings };
+        return {
+          ok: false,
+          change,
+          schema: schemaName,
+          findings: context.findings,
+        };
       }
       if (context.revision) {
         source = { kind: "retained", revision: context.revision };
@@ -357,18 +619,31 @@ async function runGate(context: Context, targetSchema?: string, targetSchemaRoot
         source = { kind: "current", revision };
       }
     } else {
-      const checked = context.revision ? await checkPinnedRevision(context, change) : undefined;
+      const checked = context.revision
+        ? await checkPinnedRevision(context, change)
+        : undefined;
       if (context.revision && (!checked || !checked.retained)) {
-        return { ok: false, change, schema: schemaName, findings: context.findings };
+        return {
+          ok: false,
+          change,
+          schema: schemaName,
+          findings: context.findings,
+        };
       }
       if (targetSchemaRoot !== undefined) {
         source = {
           kind: "directory",
-          root: path.isAbsolute(targetSchemaRoot) ? targetSchemaRoot : path.resolve(context.root, targetSchemaRoot),
+          root: path.isAbsolute(targetSchemaRoot)
+            ? targetSchemaRoot
+            : path.resolve(context.root, targetSchemaRoot),
         };
       } else {
-        const targetRevision = await resolveRevision(context.client, schemaName);
-        if (targetRevision.name !== context.revision?.name) reportShadows(context, change, targetRevision);
+        const targetRevision = await resolveRevision(
+          context.client,
+          schemaName,
+        );
+        if (targetRevision.name !== context.revision?.name)
+          reportShadows(context, change, targetRevision);
         source = { kind: "current", revision: targetRevision };
       }
     }
@@ -379,7 +654,12 @@ async function runGate(context: Context, targetSchema?: string, targetSchemaRoot
       message: `Could not resolve schema ${schemaName}: ${error instanceof Error ? error.message : String(error)}`,
       path: projectPath(change, ".openspec.yaml"),
     });
-    return { ok: false, change, schema: schemaName, findings: context.findings };
+    return {
+      ok: false,
+      change,
+      schema: schemaName,
+      findings: context.findings,
+    };
   }
 
   let temporaryRoot: string | undefined;
@@ -399,7 +679,15 @@ async function runGate(context: Context, targetSchema?: string, targetSchemaRoot
     }
     if (status !== undefined) readStatus(change, schemaName, status, context);
 
-    const result = await new OpenSpecClient(temporaryRoot).commandResult("validate", change, "--type", "change", "--strict", "--json", "--no-interactive");
+    const result = await new OpenSpecClient(temporaryRoot).commandResult(
+      "validate",
+      change,
+      "--type",
+      "change",
+      "--strict",
+      "--json",
+      "--no-interactive",
+    );
     readValidationResult(change, result, context);
   } catch (error) {
     add(context, {
@@ -409,18 +697,29 @@ async function runGate(context: Context, targetSchema?: string, targetSchemaRoot
       path: projectPath(change),
     });
   } finally {
-    if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
+    if (temporaryRoot)
+      await rm(temporaryRoot, { recursive: true, force: true });
   }
 
-  return { ok: !context.blocked, change, schema: schemaName, findings: context.findings };
+  return {
+    ok: !context.blocked,
+    change,
+    schema: schemaName,
+    findings: context.findings,
+  };
 }
 
 /** Validate a change against its exact effective pinned revision without modifying the project. */
-export async function validateChange(root: string, name: string): Promise<ValidationResult> {
+export async function validateChange(
+  root: string,
+  name: string,
+): Promise<ValidationResult> {
   return runGate(await prepareContext(root, name));
 }
 
-export interface ValidateChangeAgainstOptions { targetSchemaRoot?: string }
+export interface ValidateChangeAgainstOptions {
+  targetSchemaRoot?: string;
+}
 
 /** Preflight a change against a destination schema in an isolated OpenSpec project. */
 export async function validateChangeAgainst(
@@ -429,5 +728,9 @@ export async function validateChangeAgainst(
   targetSchema: string,
   options: ValidateChangeAgainstOptions = {},
 ): Promise<ValidationResult> {
-  return runGate(await prepareContext(root, name), targetSchema, options.targetSchemaRoot);
+  return runGate(
+    await prepareContext(root, name),
+    targetSchema,
+    options.targetSchemaRoot,
+  );
 }

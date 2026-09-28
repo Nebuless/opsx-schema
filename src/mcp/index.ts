@@ -1,5 +1,13 @@
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, link, unlink } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  link,
+  unlink,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,7 +24,12 @@ export interface McpHostDiagnostic {
   message: string;
 }
 
-export type McpHostStatusName = "configured" | "missing" | "prerequisite-needed" | "unknown" | "unsupported";
+export type McpHostStatusName =
+  | "configured"
+  | "missing"
+  | "prerequisite-needed"
+  | "unknown"
+  | "unsupported";
 
 export interface McpHostStatus {
   host: McpHost;
@@ -49,7 +62,10 @@ export interface McpHostInfo {
   diagnostic?: McpHostDiagnostic;
 }
 
-export type McpConfigEntry = { url: string } | { type: "http"; url: string; auth?: false } | { type: "remote"; url: string };
+export type McpConfigEntry =
+  | { url: string }
+  | { type: "http"; url: string; auth?: false }
+  | { type: "remote"; url: string };
 export type McpConfigEntries = Record<string, McpConfigEntry>;
 
 export interface McpCatalog {
@@ -97,7 +113,9 @@ export interface McpInstallOptions extends McpProviderOptions {
 }
 
 /** Fresh current-user confirmation; the UI must display provider safety metadata and the exact host/config diff. */
-export type McpInstallApproval = (preview: McpInstallPreview) => boolean | Promise<boolean>;
+export type McpInstallApproval = (
+  preview: McpInstallPreview,
+) => boolean | Promise<boolean>;
 
 export interface McpApplyOptions extends McpInstallOptions {
   /** Called inside Apply to obtain fresh user approval for the exact current preview. */
@@ -114,7 +132,11 @@ const HOST_INFO: McpHostInfo[] = [
   { host: "atomic", installMode: "config" },
   { host: "omp", installMode: "config" },
   { host: "opencode", installMode: "config" },
-  { host: "pi", installMode: "prerequisite-needed", prerequisite: "pi-mcp-adapter" },
+  {
+    host: "pi",
+    installMode: "prerequisite-needed",
+    prerequisite: "pi-mcp-adapter",
+  },
   { host: "senpi", installMode: "config" },
 ];
 const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
@@ -194,34 +216,51 @@ function fail(code: string, message: string): never {
 
 function exactKeys(value: McpRecord, expected: string[]): boolean {
   const actual = Object.keys(value);
-  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+  return (
+    actual.length === expected.length &&
+    expected.every((key) => Object.hasOwn(value, key))
+  );
 }
 
 function sameIdentity(left: FileStat, right: FileStat): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function sameSnapshot(left: FileSnapshot | null, right: FileSnapshot | null): boolean {
+function sameSnapshot(
+  left: FileSnapshot | null,
+  right: FileSnapshot | null,
+): boolean {
   return left === null
     ? right === null
-    : right !== null && sameIdentity(left.stat, right.stat) && left.bytes.equals(right.bytes);
+    : right !== null &&
+        sameIdentity(left.stat, right.stat) &&
+        left.bytes.equals(right.bytes);
 }
 
-function samePiAdapterEvidence(left: PiAdapterEvidence | null, right: PiAdapterEvidence | null): boolean {
+function samePiAdapterEvidence(
+  left: PiAdapterEvidence | null,
+  right: PiAdapterEvidence | null,
+): boolean {
   if (left === null || right === null) return left === right;
-  return left.agentDir === right.agentDir
-    && left.packageRoot === right.packageRoot
-    && left.packageManifestPath === right.packageManifestPath
-    && left.entrypointPath === right.entrypointPath
-    && left.trustStorePath === right.trustStorePath
-    && sameSnapshot(left.trustStore, right.trustStore)
-    && sameSnapshot(left.packageManifest, right.packageManifest)
-    && sameSnapshot(left.entrypoint, right.entrypoint)
-    && left.settings.length === right.settings.length
-    && left.settings.every((entry, index) => {
+  return (
+    left.agentDir === right.agentDir &&
+    left.packageRoot === right.packageRoot &&
+    left.packageManifestPath === right.packageManifestPath &&
+    left.entrypointPath === right.entrypointPath &&
+    left.trustStorePath === right.trustStorePath &&
+    sameSnapshot(left.trustStore, right.trustStore) &&
+    sameSnapshot(left.packageManifest, right.packageManifest) &&
+    sameSnapshot(left.entrypoint, right.entrypoint) &&
+    left.settings.length === right.settings.length &&
+    left.settings.every((entry, index) => {
       const current = right.settings[index];
-      return current !== undefined && entry.path === current.path && sameSnapshot(entry.snapshot, current.snapshot);
-    });
+      return (
+        current !== undefined &&
+        entry.path === current.path &&
+        sameSnapshot(entry.snapshot, current.snapshot)
+      );
+    })
+  );
 }
 
 async function lstatOrNull(file: string): Promise<FileStat | null> {
@@ -233,13 +272,17 @@ async function lstatOrNull(file: string): Promise<FileStat | null> {
   }
 }
 
-async function assertSafeDirectoryChain(directory: string, allowMissing: boolean): Promise<void> {
+async function assertSafeDirectoryChain(
+  directory: string,
+  allowMissing: boolean,
+): Promise<void> {
   let current = path.resolve(directory);
   const missing: string[] = [];
   for (;;) {
     const info = await lstatOrNull(current);
     if (!info) {
-      if (!allowMissing) fail("MCP_HOST_UNSAFE", `Host directory does not exist: ${current}`);
+      if (!allowMissing)
+        fail("MCP_HOST_UNSAFE", `Host directory does not exist: ${current}`);
       missing.push(current);
     } else if (info.isSymbolicLink() || !info.isDirectory()) {
       fail("MCP_HOST_UNSAFE", `Unsafe host directory: ${current}`);
@@ -251,13 +294,18 @@ async function assertSafeDirectoryChain(directory: string, allowMissing: boolean
 
   // Missing directories are created only after approval. This pass merely
   // verifies that their nearest existing ancestor is a real directory.
-  if (!allowMissing && missing.length) fail("MCP_HOST_UNSAFE", `Host directory does not exist: ${missing[0]}`);
+  if (!allowMissing && missing.length)
+    fail("MCP_HOST_UNSAFE", `Host directory does not exist: ${missing[0]}`);
 }
 
-async function readRegularFile(file: string, label: string): Promise<FileSnapshot | null> {
+async function readRegularFile(
+  file: string,
+  label: string,
+): Promise<FileSnapshot | null> {
   const info = await lstatOrNull(file);
   if (!info) return null;
-  if (info.isSymbolicLink() || !info.isFile()) fail("MCP_HOST_UNSAFE", `Unsafe ${label}: ${file}`);
+  if (info.isSymbolicLink() || !info.isFile())
+    fail("MCP_HOST_UNSAFE", `Unsafe ${label}: ${file}`);
 
   let handle;
   try {
@@ -268,13 +316,21 @@ async function readRegularFile(file: string, label: string): Promise<FileSnapsho
     }
     const bytes = await handle.readFile();
     const after = await lstatOrNull(file);
-    if (!after || !after.isFile() || after.isSymbolicLink() || !sameIdentity(openedInfo, after)) {
+    if (
+      !after ||
+      !after.isFile() ||
+      after.isSymbolicLink() ||
+      !sameIdentity(openedInfo, after)
+    ) {
       fail("MCP_HOST_CHANGED", `${label} changed while being read: ${file}`);
     }
     return { bytes, stat: after };
   } catch (error) {
     if (error instanceof OpsxError) throw error;
-    throw new OpsxError("MCP_HOST_UNSAFE", `Cannot safely read ${label}: ${file}`);
+    throw new OpsxError(
+      "MCP_HOST_UNSAFE",
+      `Cannot safely read ${label}: ${file}`,
+    );
   } finally {
     await handle?.close();
   }
@@ -282,25 +338,43 @@ async function readRegularFile(file: string, label: string): Promise<FileSnapsho
 
 function piPackageSource(value: unknown): string | null {
   if (typeof value === "string") return value;
-  if (isMcpRecord(value) && typeof value.source === "string") return value.source;
+  if (isMcpRecord(value) && typeof value.source === "string")
+    return value.source;
   return null;
 }
 
-function piPackageEntryLoadsAdapter(value: unknown, extensionPath: string): boolean {
+function piPackageEntryLoadsAdapter(
+  value: unknown,
+  extensionPath: string,
+): boolean {
   const source = piPackageSource(value);
   if (!source || !/^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(source)) return false;
-  if (typeof value === "string" || !isMcpRecord(value) || value.extensions === undefined) return true;
-  if (!Array.isArray(value.extensions) || value.extensions.length === 0) return false;
+  if (
+    typeof value === "string" ||
+    !isMcpRecord(value) ||
+    value.extensions === undefined
+  )
+    return true;
+  if (!Array.isArray(value.extensions) || value.extensions.length === 0)
+    return false;
 
-  const normalizedPath = extensionPath.startsWith("./") ? extensionPath.slice(2) : extensionPath;
+  const normalizedPath = extensionPath.startsWith("./")
+    ? extensionPath.slice(2)
+    : extensionPath;
   const matches = (selector: string): boolean => {
     let normalized = selector.startsWith("+") ? selector.slice(1) : selector;
     if (normalized.startsWith("./")) normalized = normalized.slice(2);
-    return normalized === normalizedPath || normalized === "*" || normalized === "**";
+    return (
+      normalized === normalizedPath || normalized === "*" || normalized === "**"
+    );
   };
-  const selectors = value.extensions.filter((item): item is string => typeof item === "string");
+  const selectors = value.extensions.filter(
+    (item): item is string => typeof item === "string",
+  );
   if (selectors.length !== value.extensions.length) return false;
-  const hasInclude = selectors.some((item) => !item.startsWith("!") && !item.startsWith("-"));
+  const hasInclude = selectors.some(
+    (item) => !item.startsWith("!") && !item.startsWith("-"),
+  );
   let included = !hasInclude;
   for (const selector of selectors) {
     const excluded = selector.startsWith("!") || selector.startsWith("-");
@@ -310,12 +384,23 @@ function piPackageEntryLoadsAdapter(value: unknown, extensionPath: string): bool
 }
 
 function errorDiagnostic(error: unknown): McpHostDiagnostic {
-  if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
-    return { code: error.code, message: error instanceof Error ? error.message : String(error) };
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return {
+      code: error.code,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
   return {
     code: "MCP_HOST_INSPECTION_FAILED",
-    message: error instanceof Error ? error.message : "Could not safely inspect MCP host configuration",
+    message:
+      error instanceof Error
+        ? error.message
+        : "Could not safely inspect MCP host configuration",
   };
 }
 
@@ -327,14 +412,27 @@ function inspectPiProjectTrust(
   let entries: McpRecord = {};
   if (trustStore) {
     try {
-      const parsed: unknown = JSON.parse(trustStore.bytes.toString("utf8").replace(/^\uFEFF/, ""));
-      if (!isMcpRecord(parsed)) throw new Error("trust store must be an object");
+      const parsed: unknown = JSON.parse(
+        trustStore.bytes.toString("utf8").replace(/^\uFEFF/, ""),
+      );
+      if (!isMcpRecord(parsed))
+        throw new Error("trust store must be an object");
       entries = parsed;
-      if (Object.values(entries).some((value) => value !== null && typeof value !== "boolean")) {
+      if (
+        Object.values(entries).some(
+          (value) => value !== null && typeof value !== "boolean",
+        )
+      ) {
         throw new Error("trust store decisions must be booleans or null");
       }
     } catch {
-      return { trusted: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Cannot safely inspect Pi project trust settings" } };
+      return {
+        trusted: false,
+        diagnostic: {
+          code: "MCP_PI_ADAPTER_UNKNOWN",
+          message: "Cannot safely inspect Pi project trust settings",
+        },
+      };
     }
   }
 
@@ -342,7 +440,15 @@ function inspectPiProjectTrust(
   for (;;) {
     const decision = entries[currentDir];
     if (decision === true) return { trusted: true };
-    if (decision === false) return { trusted: false, diagnostic: { code: "MCP_PI_PROJECT_UNTRUSTED", message: "Pi has not trusted this project for project-local MCP packages" } };
+    if (decision === false)
+      return {
+        trusted: false,
+        diagnostic: {
+          code: "MCP_PI_PROJECT_UNTRUSTED",
+          message:
+            "Pi has not trusted this project for project-local MCP packages",
+        },
+      };
     const parentDir = path.dirname(currentDir);
     if (parentDir === currentDir) break;
     currentDir = parentDir;
@@ -350,15 +456,41 @@ function inspectPiProjectTrust(
 
   const defaultTrust = globalSettings?.defaultProjectTrust;
   if (defaultTrust === "always") return { trusted: true };
-  if (defaultTrust === undefined || defaultTrust === "ask" || defaultTrust === "never") {
-    return { trusted: false, diagnostic: { code: "MCP_PI_PROJECT_UNTRUSTED", message: "Pi project-local MCP packages are not trusted; explicitly trust the project in Pi first" } };
+  if (
+    defaultTrust === undefined ||
+    defaultTrust === "ask" ||
+    defaultTrust === "never"
+  ) {
+    return {
+      trusted: false,
+      diagnostic: {
+        code: "MCP_PI_PROJECT_UNTRUSTED",
+        message:
+          "Pi project-local MCP packages are not trusted; explicitly trust the project in Pi first",
+      },
+    };
   }
-  return { trusted: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Cannot safely determine Pi project trust from global settings" } };
+  return {
+    trusted: false,
+    diagnostic: {
+      code: "MCP_PI_ADAPTER_UNKNOWN",
+      message: "Cannot safely determine Pi project trust from global settings",
+    },
+  };
 }
 
-async function inspectPiMcpAdapter(targetDir: string): Promise<PiAdapterReadiness> {
-  const agentDir = path.resolve(process.env.PI_CODING_AGENT_DIR || path.join(homedir(), ".pi", "agent"));
-  const packageRoot = path.join(agentDir, "npm", "node_modules", "pi-mcp-adapter");
+async function inspectPiMcpAdapter(
+  targetDir: string,
+): Promise<PiAdapterReadiness> {
+  const agentDir = path.resolve(
+    process.env.PI_CODING_AGENT_DIR || path.join(homedir(), ".pi", "agent"),
+  );
+  const packageRoot = path.join(
+    agentDir,
+    "npm",
+    "node_modules",
+    "pi-mcp-adapter",
+  );
   const packageManifestPath = path.join(packageRoot, "package.json");
   const settingsFiles = [
     path.join(agentDir, "settings.json"),
@@ -383,67 +515,162 @@ async function inspectPiMcpAdapter(targetDir: string): Promise<PiAdapterReadines
   });
   try {
     await assertSafeDirectoryChain(packageRoot, true);
-    evidence.packageManifest = await readRegularFile(packageManifestPath, "Pi MCP adapter package manifest");
-    if (!evidence.packageManifest) return missing("Pi MCP support requires the separately installed pi-mcp-adapter package (pi install npm:pi-mcp-adapter).");
+    evidence.packageManifest = await readRegularFile(
+      packageManifestPath,
+      "Pi MCP adapter package manifest",
+    );
+    if (!evidence.packageManifest)
+      return missing(
+        "Pi MCP support requires the separately installed pi-mcp-adapter package (pi install npm:pi-mcp-adapter).",
+      );
 
     let manifest: unknown;
     try {
-      manifest = JSON.parse(evidence.packageManifest.bytes.toString("utf8")) as unknown;
+      manifest = JSON.parse(
+        evidence.packageManifest.bytes.toString("utf8"),
+      ) as unknown;
     } catch {
-      return { ready: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Cannot parse Pi MCP adapter package manifest: " + packageManifestPath }, evidence };
+      return {
+        ready: false,
+        diagnostic: {
+          code: "MCP_PI_ADAPTER_UNKNOWN",
+          message:
+            "Cannot parse Pi MCP adapter package manifest: " +
+            packageManifestPath,
+        },
+        evidence,
+      };
     }
-    const pi = isMcpRecord(manifest) && isMcpRecord(manifest.pi) ? manifest.pi : null;
-    const extensionPaths = pi && Array.isArray(pi.extensions)
-      ? pi.extensions.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && !/[?*]/.test(entry))
-      : [];
-    if (!isMcpRecord(manifest) || manifest.name !== "pi-mcp-adapter" || extensionPaths.length === 0) {
-      return { ready: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Installed package is not a verifiable Pi MCP extension: " + packageManifestPath }, evidence };
+    const pi =
+      isMcpRecord(manifest) && isMcpRecord(manifest.pi) ? manifest.pi : null;
+    const extensionPaths =
+      pi && Array.isArray(pi.extensions)
+        ? pi.extensions.filter(
+            (entry): entry is string =>
+              typeof entry === "string" &&
+              entry.length > 0 &&
+              !/[?*]/.test(entry),
+          )
+        : [];
+    if (
+      !isMcpRecord(manifest) ||
+      manifest.name !== "pi-mcp-adapter" ||
+      extensionPaths.length === 0
+    ) {
+      return {
+        ready: false,
+        diagnostic: {
+          code: "MCP_PI_ADAPTER_UNKNOWN",
+          message:
+            "Installed package is not a verifiable Pi MCP extension: " +
+            packageManifestPath,
+        },
+        evidence,
+      };
     }
     const extensionPath = extensionPaths[0]!;
     const resolvedEntrypoint = path.resolve(packageRoot, extensionPath);
-    if (resolvedEntrypoint !== packageRoot && !resolvedEntrypoint.startsWith(packageRoot + path.sep)) {
-      return { ready: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Pi MCP adapter entrypoint escapes its package: " + extensionPath }, evidence };
+    if (
+      resolvedEntrypoint !== packageRoot &&
+      !resolvedEntrypoint.startsWith(packageRoot + path.sep)
+    ) {
+      return {
+        ready: false,
+        diagnostic: {
+          code: "MCP_PI_ADAPTER_UNKNOWN",
+          message:
+            "Pi MCP adapter entrypoint escapes its package: " + extensionPath,
+        },
+        evidence,
+      };
     }
     evidence.entrypointPath = resolvedEntrypoint;
     await assertSafeDirectoryChain(path.dirname(resolvedEntrypoint), true);
-    evidence.entrypoint = await readRegularFile(resolvedEntrypoint, "Pi MCP adapter extension entrypoint");
-    if (!evidence.entrypoint) return missing("Pi MCP adapter extension entrypoint is missing: " + resolvedEntrypoint);
+    evidence.entrypoint = await readRegularFile(
+      resolvedEntrypoint,
+      "Pi MCP adapter extension entrypoint",
+    );
+    if (!evidence.entrypoint)
+      return missing(
+        "Pi MCP adapter extension entrypoint is missing: " + resolvedEntrypoint,
+      );
 
     let globalSettings: McpRecord | null = null;
     let projectSettings: McpRecord | null = null;
     for (const [index, settingsPath] of settingsFiles.entries()) {
       await assertSafeDirectoryChain(path.dirname(settingsPath), true);
-      const snapshot = await readRegularFile(settingsPath, "Pi package settings");
+      const snapshot = await readRegularFile(
+        settingsPath,
+        "Pi package settings",
+      );
       evidence.settings.push({ path: settingsPath, snapshot });
       if (!snapshot) continue;
       let settings: McpRecord;
       try {
         const parsed = parseJsonc(snapshot.bytes.toString("utf8")).value;
-        if (!isMcpRecord(parsed)) throw new Error("Pi settings must be an object");
+        if (!isMcpRecord(parsed))
+          throw new Error("Pi settings must be an object");
         settings = parsed;
       } catch {
-        return { ready: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Cannot safely inspect Pi package settings: " + settingsPath }, evidence };
+        return {
+          ready: false,
+          diagnostic: {
+            code: "MCP_PI_ADAPTER_UNKNOWN",
+            message:
+              "Cannot safely inspect Pi package settings: " + settingsPath,
+          },
+          evidence,
+        };
       }
-      if (settings.packages !== undefined && !Array.isArray(settings.packages)) {
-        return { ready: false, diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message: "Pi package settings must use a packages array: " + settingsPath }, evidence };
+      if (
+        settings.packages !== undefined &&
+        !Array.isArray(settings.packages)
+      ) {
+        return {
+          ready: false,
+          diagnostic: {
+            code: "MCP_PI_ADAPTER_UNKNOWN",
+            message:
+              "Pi package settings must use a packages array: " + settingsPath,
+          },
+          evidence,
+        };
       }
       if (index === 0) globalSettings = settings;
       else projectSettings = settings;
     }
     const projectPackages = projectSettings?.packages;
     const usesProjectPackages = projectPackages !== undefined;
-    const effectivePackages = (usesProjectPackages ? projectPackages : globalSettings?.packages) as unknown[] | undefined;
-    if (!effectivePackages?.some((entry) => piPackageEntryLoadsAdapter(entry, extensionPath))) {
-      return missing("Pi MCP support requires pi-mcp-adapter to be registered with Pi (pi install npm:pi-mcp-adapter).");
+    const effectivePackages = (
+      usesProjectPackages ? projectPackages : globalSettings?.packages
+    ) as unknown[] | undefined;
+    if (
+      !effectivePackages?.some((entry) =>
+        piPackageEntryLoadsAdapter(entry, extensionPath),
+      )
+    ) {
+      return missing(
+        "Pi MCP support requires pi-mcp-adapter to be registered with Pi (pi install npm:pi-mcp-adapter).",
+      );
     }
     if (usesProjectPackages) {
       await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
-      evidence.trustStore = await readRegularFile(trustStorePath, "Pi project trust store");
-      const trust = inspectPiProjectTrust(targetDir, evidence.trustStore, globalSettings);
+      evidence.trustStore = await readRegularFile(
+        trustStorePath,
+        "Pi project trust store",
+      );
+      const trust = inspectPiProjectTrust(
+        targetDir,
+        evidence.trustStore,
+        globalSettings,
+      );
       if (!trust.trusted) {
         return {
           ready: false,
-          diagnostic: trust.diagnostic ?? { code: "MCP_PI_PROJECT_UNTRUSTED", message: "Pi project-local MCP packages are not trusted" },
+          diagnostic: trust.diagnostic ?? {
+            code: "MCP_PI_PROJECT_UNTRUSTED",
+            message: "Pi project-local MCP packages are not trusted",
+          },
           evidence,
         };
       }
@@ -454,14 +681,21 @@ async function inspectPiMcpAdapter(targetDir: string): Promise<PiAdapterReadines
   }
 }
 
-async function resolveHostReadiness(host: McpHost, targetDir?: string): Promise<HostReadiness> {
+async function resolveHostReadiness(
+  host: McpHost,
+  targetDir?: string,
+): Promise<HostReadiness> {
   const base = HOST_INFO.find((entry) => entry.host === host)!;
   if (host !== "pi") return { info: { ...base }, piAdapterEvidence: null };
   if (!targetDir) {
     return {
       info: {
         ...base,
-        diagnostic: { code: "MCP_PI_ADAPTER_UNVERIFIED", message: "A project target is required to verify the separately installed Pi MCP adapter." },
+        diagnostic: {
+          code: "MCP_PI_ADAPTER_UNVERIFIED",
+          message:
+            "A project target is required to verify the separately installed Pi MCP adapter.",
+        },
       },
       piAdapterEvidence: null,
     };
@@ -471,25 +705,38 @@ async function resolveHostReadiness(host: McpHost, targetDir?: string): Promise<
     info: {
       host: "pi",
       installMode: adapter.ready ? "config" : "prerequisite-needed",
-      ...(adapter.ready ? {} : { prerequisite: "pi-mcp-adapter", diagnostic: adapter.diagnostic }),
+      ...(adapter.ready
+        ? {}
+        : { prerequisite: "pi-mcp-adapter", diagnostic: adapter.diagnostic }),
     },
     piAdapterEvidence: adapter.evidence,
   };
 }
 
-async function resolveAllHostReadiness(targetDir?: string): Promise<HostReadiness[]> {
-  return Promise.all(HOSTS.map((host) => resolveHostReadiness(host, targetDir)));
+async function resolveAllHostReadiness(
+  targetDir?: string,
+): Promise<HostReadiness[]> {
+  return Promise.all(
+    HOSTS.map((host) => resolveHostReadiness(host, targetDir)),
+  );
 }
 
 function fallbackConfigPath(targetDir: string, host: McpHost): string {
-  if (host === "atomic" || host === "pi") return path.join(targetDir, ".mcp.json");
+  if (host === "atomic" || host === "pi")
+    return path.join(targetDir, ".mcp.json");
   if (host === "omp") return path.join(targetDir, ".omp", "mcp.json");
   if (host === "senpi") return path.join(targetDir, ".senpi", "mcp.json");
   return path.join(targetDir, "opencode.jsonc");
 }
 
-function hostPathFor(targetDir: string, host: McpHost, configPath: string): string {
-  return host === "atomic" || host === "pi" ? targetDir : path.dirname(configPath);
+function hostPathFor(
+  targetDir: string,
+  host: McpHost,
+  configPath: string,
+): string {
+  return host === "atomic" || host === "pi"
+    ? targetDir
+    : path.dirname(configPath);
 }
 
 async function inspectProviderHosts(
@@ -498,54 +745,76 @@ async function inspectProviderHosts(
   targetDir: string,
   readiness: HostReadiness[],
 ): Promise<McpHostStatus[]> {
-  return Promise.all(HOSTS.map(async (host, index) => {
-    const currentReadiness = readiness[index]!;
-    const configPath = fallbackConfigPath(targetDir, host);
-    const hostPath = hostPathFor(targetDir, host, configPath);
-    const base = {
-      host,
-      installMode: currentReadiness.info.installMode,
-      transport: "http" as const,
-      auth: "none" as const,
-      ...(currentReadiness.info.prerequisite ? { prerequisite: currentReadiness.info.prerequisite } : {}),
-    };
-    if (!provider.supportedHosts.includes(host)) {
-      return { ...base, status: "unsupported", configured: null, hostPath, configPath };
-    }
-    try {
-      const plan = await makePlan({
-        schemaDir: path.dirname(catalog.path),
-        providerName: provider.name,
-        targetDir,
+  return Promise.all(
+    HOSTS.map(async (host, index) => {
+      const currentReadiness = readiness[index]!;
+      const configPath = fallbackConfigPath(targetDir, host);
+      const hostPath = hostPathFor(targetDir, host, configPath);
+      const base = {
         host,
-      }, catalog, currentReadiness);
-      let status: McpHostStatusName;
-      if (plan.preview.installMode === "guided-only") status = "unsupported";
-      else if (plan.preview.installMode === "prerequisite-needed") {
-        status = plan.preview.diagnostic?.code === "MCP_PI_ADAPTER_UNKNOWN" ? "unknown" : "prerequisite-needed";
-      } else status = plan.preview.changed ? "missing" : "configured";
-      return {
-        ...base,
-        status,
-        configured: !plan.preview.changed,
-        hostPath: plan.preview.hostPath,
-        configPath: plan.preview.configPath,
-        ...(plan.preview.diagnostic ? { diagnostic: plan.preview.diagnostic } : {}),
+        installMode: currentReadiness.info.installMode,
+        transport: "http" as const,
+        auth: "none" as const,
+        ...(currentReadiness.info.prerequisite
+          ? { prerequisite: currentReadiness.info.prerequisite }
+          : {}),
       };
-    } catch (error) {
-      return {
-        ...base,
-        status: "unknown",
-        configured: null,
-        hostPath,
-        configPath,
-        diagnostic: errorDiagnostic(error),
-      };
-    }
-  }));
+      if (!provider.supportedHosts.includes(host)) {
+        return {
+          ...base,
+          status: "unsupported",
+          configured: null,
+          hostPath,
+          configPath,
+        };
+      }
+      try {
+        const plan = await makePlan(
+          {
+            schemaDir: path.dirname(catalog.path),
+            providerName: provider.name,
+            targetDir,
+            host,
+          },
+          catalog,
+          currentReadiness,
+        );
+        let status: McpHostStatusName;
+        if (plan.preview.installMode === "guided-only") status = "unsupported";
+        else if (plan.preview.installMode === "prerequisite-needed") {
+          status =
+            plan.preview.diagnostic?.code === "MCP_PI_ADAPTER_UNKNOWN"
+              ? "unknown"
+              : "prerequisite-needed";
+        } else status = plan.preview.changed ? "missing" : "configured";
+        return {
+          ...base,
+          status,
+          configured: !plan.preview.changed,
+          hostPath: plan.preview.hostPath,
+          configPath: plan.preview.configPath,
+          ...(plan.preview.diagnostic
+            ? { diagnostic: plan.preview.diagnostic }
+            : {}),
+        };
+      } catch (error) {
+        return {
+          ...base,
+          status: "unknown",
+          configured: null,
+          hostPath,
+          configPath,
+          diagnostic: errorDiagnostic(error),
+        };
+      }
+    }),
+  );
 }
 
-async function catalogForInspection(catalog: CatalogSnapshot, targetDir?: string): Promise<McpCatalog> {
+async function catalogForInspection(
+  catalog: CatalogSnapshot,
+  targetDir?: string,
+): Promise<McpCatalog> {
   if (!targetDir) {
     const readiness = await resolveAllHostReadiness();
     return {
@@ -557,10 +826,17 @@ async function catalogForInspection(catalog: CatalogSnapshot, targetDir?: string
   const root = path.resolve(targetDir);
   await assertSafeDirectoryChain(root, false);
   const readiness = await resolveAllHostReadiness(root);
-  const providers = await Promise.all(catalog.providers.map(async (provider) => ({
-    ...provider,
-    hostStatus: await inspectProviderHosts(catalog, provider, root, readiness),
-  })));
+  const providers = await Promise.all(
+    catalog.providers.map(async (provider) => ({
+      ...provider,
+      hostStatus: await inspectProviderHosts(
+        catalog,
+        provider,
+        root,
+        readiness,
+      ),
+    })),
+  );
   return {
     version: 1,
     providers,
@@ -570,7 +846,8 @@ async function catalogForInspection(catalog: CatalogSnapshot, targetDir?: string
 
 function yamlValue(node: unknown): unknown {
   if (node === null || node === undefined) return null;
-  if (isAlias(node)) fail("MCP_CATALOG_UNSAFE", "MCP catalogs may not contain YAML aliases");
+  if (isAlias(node))
+    fail("MCP_CATALOG_UNSAFE", "MCP catalogs may not contain YAML aliases");
   if (isScalar(node)) return node.value;
   if (isSeq(node)) return node.items.map((item) => yamlValue(item));
   if (isMap(node)) {
@@ -578,7 +855,10 @@ function yamlValue(node: unknown): unknown {
     for (const pair of node.items) {
       const key = yamlValue(pair.key);
       if (typeof key !== "string" || Object.hasOwn(result, key)) {
-        fail("MCP_CATALOG_UNSAFE", "MCP catalog mapping keys must be unique strings");
+        fail(
+          "MCP_CATALOG_UNSAFE",
+          "MCP catalog mapping keys must be unique strings",
+        );
       }
       result[key] = yamlValue(pair.value);
     }
@@ -588,14 +868,34 @@ function yamlValue(node: unknown): unknown {
 }
 
 function validateProvider(raw: unknown, names: Set<string>): McpProvider {
-  if (!isMcpRecord(raw) || !exactKeys(raw, ["name", "url", "readOnly", "auth"])) {
-    fail("MCP_CATALOG_UNSAFE", "Each MCP catalog server must contain only name, url, readOnly, and auth");
+  if (
+    !isMcpRecord(raw) ||
+    !exactKeys(raw, ["name", "url", "readOnly", "auth"])
+  ) {
+    fail(
+      "MCP_CATALOG_UNSAFE",
+      "Each MCP catalog server must contain only name, url, readOnly, and auth",
+    );
   }
-  if (typeof raw.name !== "string" || !/^[a-z][a-z0-9-]*$/.test(raw.name) || names.has(raw.name)) {
-    fail("MCP_CATALOG_UNSAFE", "MCP catalog server names must be unique lowercase-hyphen names");
+  if (
+    typeof raw.name !== "string" ||
+    !/^[a-z][a-z0-9-]*$/.test(raw.name) ||
+    names.has(raw.name)
+  ) {
+    fail(
+      "MCP_CATALOG_UNSAFE",
+      "MCP catalog server names must be unique lowercase-hyphen names",
+    );
   }
-  if (typeof raw.url !== "string" || raw.readOnly !== true || raw.auth !== "none") {
-    fail("MCP_CATALOG_UNSAFE", `MCP provider ${raw.name} must be HTTPS, read-only, and unauthenticated`);
+  if (
+    typeof raw.url !== "string" ||
+    raw.readOnly !== true ||
+    raw.auth !== "none"
+  ) {
+    fail(
+      "MCP_CATALOG_UNSAFE",
+      `MCP provider ${raw.name} must be HTTPS, read-only, and unauthenticated`,
+    );
   }
   let endpoint: URL;
   try {
@@ -603,8 +903,16 @@ function validateProvider(raw: unknown, names: Set<string>): McpProvider {
   } catch {
     fail("MCP_CATALOG_UNSAFE", `MCP provider ${raw.name} has an invalid URL`);
   }
-  if (endpoint.protocol !== "https:" || !endpoint.hostname || endpoint.username || endpoint.password) {
-    fail("MCP_CATALOG_UNSAFE", `MCP provider ${raw.name} must use HTTPS without embedded credentials`);
+  if (
+    endpoint.protocol !== "https:" ||
+    !endpoint.hostname ||
+    endpoint.username ||
+    endpoint.password
+  ) {
+    fail(
+      "MCP_CATALOG_UNSAFE",
+      `MCP provider ${raw.name} must use HTTPS without embedded credentials`,
+    );
   }
   names.add(raw.name);
   return {
@@ -623,27 +931,51 @@ async function readCatalog(schemaDir: string): Promise<CatalogSnapshot> {
   const stamp = await readRegularFile(file, "MCP catalog");
   if (!stamp) fail("MCP_CATALOG_NOT_FOUND", `No declared MCP catalog: ${file}`);
 
-  const document = YAML.parseDocument(stamp.bytes.toString("utf8"), { uniqueKeys: true, prettyErrors: true });
+  const document = YAML.parseDocument(stamp.bytes.toString("utf8"), {
+    uniqueKeys: true,
+    prettyErrors: true,
+  });
   if (document.errors.length || document.warnings.length) {
     fail("MCP_CATALOG_UNSAFE", `Invalid or ambiguous MCP catalog: ${file}`);
   }
   const parsed = yamlValue(document.contents);
-  if (!isMcpRecord(parsed) || !exactKeys(parsed, ["version", "servers"]) || parsed.version !== 1 || !Array.isArray(parsed.servers) || parsed.servers.length === 0) {
-    fail("MCP_CATALOG_UNSAFE", `MCP catalog must be version 1 with a non-empty servers list: ${file}`);
+  if (
+    !isMcpRecord(parsed) ||
+    !exactKeys(parsed, ["version", "servers"]) ||
+    parsed.version !== 1 ||
+    !Array.isArray(parsed.servers) ||
+    parsed.servers.length === 0
+  ) {
+    fail(
+      "MCP_CATALOG_UNSAFE",
+      `MCP catalog must be version 1 with a non-empty servers list: ${file}`,
+    );
   }
   const names = new Set<string>();
-  const providers = parsed.servers.map((entry) => validateProvider(entry, names));
+  const providers = parsed.servers.map((entry) =>
+    validateProvider(entry, names),
+  );
   return { path: file, stamp, providers };
 }
 
-function findProvider(catalog: CatalogSnapshot, providerName: string): McpProvider {
-  const provider = catalog.providers.find((entry) => entry.name === providerName);
-  if (!provider) fail("MCP_PROVIDER_UNKNOWN", `Unknown MCP provider: ${providerName}`);
+function findProvider(
+  catalog: CatalogSnapshot,
+  providerName: string,
+): McpProvider {
+  const provider = catalog.providers.find(
+    (entry) => entry.name === providerName,
+  );
+  if (!provider)
+    fail("MCP_PROVIDER_UNKNOWN", `Unknown MCP provider: ${providerName}`);
   return provider;
 }
 
 function leadingIndent(source: string, offset: number): string | null {
-  const lineStart = Math.max(source.lastIndexOf("\n", offset - 1), source.lastIndexOf("\r", offset - 1)) + 1;
+  const lineStart =
+    Math.max(
+      source.lastIndexOf("\n", offset - 1),
+      source.lastIndexOf("\r", offset - 1),
+    ) + 1;
   const prefix = source.slice(lineStart, offset);
   return /^[\t ]*$/.test(prefix) ? prefix : null;
 }
@@ -661,12 +993,21 @@ function parseJsonc(source: string): ParsedMcpConfig {
       while (index < source.length && /[\t\n\r ]/.test(source[index]!)) index++;
       if (source.startsWith("//", index)) {
         index += 2;
-        while (index < source.length && source[index] !== "\n" && source[index] !== "\r") index++;
+        while (
+          index < source.length &&
+          source[index] !== "\n" &&
+          source[index] !== "\r"
+        )
+          index++;
         continue;
       }
       if (source.startsWith("/*", index)) {
         const end = source.indexOf("*/", index + 2);
-        if (end < 0) fail("MCP_CONFIG_UNSAFE", "MCP config contains an unterminated comment");
+        if (end < 0)
+          fail(
+            "MCP_CONFIG_UNSAFE",
+            "MCP config contains an unterminated comment",
+          );
         index = end + 2;
         continue;
       }
@@ -676,7 +1017,8 @@ function parseJsonc(source: string): ParsedMcpConfig {
 
   function parseString(): { value: string; start: number; end: number } {
     const start = index;
-    if (source[index] !== '"') fail("MCP_CONFIG_UNSAFE", "MCP config contains an invalid JSONC string");
+    if (source[index] !== '"')
+      fail("MCP_CONFIG_UNSAFE", "MCP config contains an invalid JSONC string");
     index++;
     while (index < source.length) {
       const character = source[index]!;
@@ -688,16 +1030,27 @@ function parseJsonc(source: string): ParsedMcpConfig {
         index++;
         try {
           const value = JSON.parse(source.slice(start, index)) as unknown;
-          if (typeof value !== "string") fail("MCP_CONFIG_UNSAFE", "MCP config contains an invalid string");
+          if (typeof value !== "string")
+            fail("MCP_CONFIG_UNSAFE", "MCP config contains an invalid string");
           return { value, start, end: index };
         } catch {
-          fail("MCP_CONFIG_UNSAFE", "MCP config contains an invalid JSONC string");
+          fail(
+            "MCP_CONFIG_UNSAFE",
+            "MCP config contains an invalid JSONC string",
+          );
         }
       }
-      if (character.charCodeAt(0) < 0x20) fail("MCP_CONFIG_UNSAFE", "MCP config contains an invalid JSONC string");
+      if (character.charCodeAt(0) < 0x20)
+        fail(
+          "MCP_CONFIG_UNSAFE",
+          "MCP config contains an invalid JSONC string",
+        );
       index++;
     }
-    fail("MCP_CONFIG_UNSAFE", "MCP config contains an unterminated JSONC string");
+    fail(
+      "MCP_CONFIG_UNSAFE",
+      "MCP config contains an unterminated JSONC string",
+    );
   }
 
   function parseValue(): JsonNode {
@@ -717,16 +1070,33 @@ function parseJsonc(source: string): ParsedMcpConfig {
       for (;;) {
         skipTrivia();
         const key = parseString();
-        if (keys.has(key.value) || ["__proto__", "constructor", "prototype"].includes(key.value)) {
-          fail("MCP_CONFIG_UNSAFE", "MCP config contains a duplicate or unsafe object key");
+        if (
+          keys.has(key.value) ||
+          ["__proto__", "constructor", "prototype"].includes(key.value)
+        ) {
+          fail(
+            "MCP_CONFIG_UNSAFE",
+            "MCP config contains a duplicate or unsafe object key",
+          );
         }
         keys.add(key.value);
         skipTrivia();
-        if (source[index] !== ":") fail("MCP_CONFIG_UNSAFE", "MCP config contains invalid JSONC syntax");
+        if (source[index] !== ":")
+          fail("MCP_CONFIG_UNSAFE", "MCP config contains invalid JSONC syntax");
         index++;
         const child = parseValue();
-        Object.defineProperty(value, key.value, { value: child.value, enumerable: true, configurable: true, writable: true });
-        const property: JsonProperty = { key: key.value, keyStart: key.start, value: child, commaAfter: false };
+        Object.defineProperty(value, key.value, {
+          value: child.value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        const property: JsonProperty = {
+          key: key.value,
+          keyStart: key.start,
+          value: child,
+          commaAfter: false,
+        };
         properties.push(property);
         skipTrivia();
         if (source[index] === ",") {
@@ -780,14 +1150,21 @@ function parseJsonc(source: string): ParsedMcpConfig {
     }
 
     while (index < source.length && !/[\t\n\r ,}\]]/.test(source[index]!)) {
-      if (source.startsWith("//", index) || source.startsWith("/*", index)) break;
+      if (source.startsWith("//", index) || source.startsWith("/*", index))
+        break;
       index++;
     }
-    if (index === start) fail("MCP_CONFIG_UNSAFE", "MCP config contains invalid JSONC syntax");
+    if (index === start)
+      fail("MCP_CONFIG_UNSAFE", "MCP config contains invalid JSONC syntax");
     const token = source.slice(start, index);
     let value: unknown;
     try {
-      if (token !== "true" && token !== "false" && token !== "null" && !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(token)) {
+      if (
+        token !== "true" &&
+        token !== "false" &&
+        token !== "null" &&
+        !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(token)
+      ) {
         fail("MCP_CONFIG_UNSAFE", "MCP config contains invalid JSONC syntax");
       }
       value = JSON.parse(token) as unknown;
@@ -800,7 +1177,11 @@ function parseJsonc(source: string): ParsedMcpConfig {
   skipTrivia();
   const parsed = parseValue();
   skipTrivia();
-  if (index !== source.length || parsed.kind !== "object" || !isMcpRecord(parsed.value)) {
+  if (
+    index !== source.length ||
+    parsed.kind !== "object" ||
+    !isMcpRecord(parsed.value)
+  ) {
     fail("MCP_CONFIG_UNSAFE", "MCP config must be one JSON or JSONC object");
   }
   return { value: parsed.value, root: parsed };
@@ -810,7 +1191,14 @@ function property(node: JsonNode, key: string): JsonProperty | undefined {
   return node.properties?.find((entry) => entry.key === key);
 }
 
-function addJsoncProperty(source: string, node: JsonNode, key: string, value: unknown, propertyIndent: string, closeIndent: string): string {
+function addJsoncProperty(
+  source: string,
+  node: JsonNode,
+  key: string,
+  value: unknown,
+  propertyIndent: string,
+  closeIndent: string,
+): string {
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
   let text = source;
   let closeIndex = node.end - 1;
@@ -821,7 +1209,11 @@ function addJsoncProperty(source: string, node: JsonNode, key: string, value: un
     closeIndex++;
   }
   let insertionIndex = closeIndex;
-  while (insertionIndex > node.start && /[\t\n\r ]/.test(text[insertionIndex - 1]!)) insertionIndex--;
+  while (
+    insertionIndex > node.start &&
+    /[\t\n\r ]/.test(text[insertionIndex - 1]!)
+  )
+    insertionIndex--;
   const addition = `${newline}${propertyIndent}${JSON.stringify(key)}: ${JSON.stringify(value)}${newline}${closeIndent}`;
   return `${text.slice(0, insertionIndex)}${addition}${text.slice(closeIndex)}`;
 }
@@ -834,17 +1226,23 @@ function expectedEntry(provider: McpProvider, host: McpHost): McpConfigEntry {
 }
 
 function exactEntry(value: unknown, expected: McpConfigEntry): boolean {
-  return isMcpRecord(value)
-    && Object.keys(value).length === Object.keys(expected).length
-    && Object.entries(expected).every(([key, item]) => value[key] === item);
+  return (
+    isMcpRecord(value) &&
+    Object.keys(value).length === Object.keys(expected).length &&
+    Object.entries(expected).every(([key, item]) => value[key] === item)
+  );
 }
 
 function configKey(host: McpHost): "mcp" | "mcpServers" {
   return host === "opencode" ? "mcp" : "mcpServers";
 }
 
-async function chooseConfigPath(targetDir: string, host: McpHost): Promise<string> {
-  if (host === "atomic" || host === "pi") return path.join(targetDir, ".mcp.json");
+async function chooseConfigPath(
+  targetDir: string,
+  host: McpHost,
+): Promise<string> {
+  if (host === "atomic" || host === "pi")
+    return path.join(targetDir, ".mcp.json");
   if (host === "omp") return path.join(targetDir, ".omp", "mcp.json");
   if (host === "senpi") return path.join(targetDir, ".senpi", "mcp.json");
 
@@ -859,17 +1257,24 @@ async function chooseConfigPath(targetDir: string, host: McpHost): Promise<strin
     await assertSafeDirectoryChain(path.dirname(candidate), true);
     const info = await lstatOrNull(candidate);
     if (info) {
-      if (info.isSymbolicLink() || !info.isFile()) fail("MCP_HOST_UNSAFE", `Unsafe OpenCode config: ${candidate}`);
+      if (info.isSymbolicLink() || !info.isFile())
+        fail("MCP_HOST_UNSAFE", `Unsafe OpenCode config: ${candidate}`);
       found.push(candidate);
     }
   }
-  if (found.length > 1) fail("MCP_HOST_UNSAFE", "Ambiguous OpenCode config candidates");
+  if (found.length > 1)
+    fail("MCP_HOST_UNSAFE", "Ambiguous OpenCode config candidates");
   return found[0] ?? path.join(targetDir, "opencode.jsonc");
 }
 
-async function readConfig(targetDir: string, host: McpHost, provider: McpProvider): Promise<ConfigSnapshot | null> {
+async function readConfig(
+  targetDir: string,
+  host: McpHost,
+  provider: McpProvider,
+): Promise<ConfigSnapshot | null> {
   const configPath = await chooseConfigPath(targetDir, host);
-  const hostPath = host === "pi" || host === "atomic" ? targetDir : path.dirname(configPath);
+  const hostPath =
+    host === "pi" || host === "atomic" ? targetDir : path.dirname(configPath);
   await assertSafeDirectoryChain(hostPath, true);
   const key = configKey(host);
   const expected = expectedEntry(provider, host);
@@ -898,20 +1303,34 @@ async function readConfig(targetDir: string, host: McpHost, provider: McpProvide
   let diffAfter: McpConfigEntry | McpConfigEntries = expected;
   const configCreated = stamp === null;
 
-  if (mapValue && (mapValue.kind !== "object" || !isMcpRecord(mapValue.value))) {
-    fail("MCP_CONFIG_UNSAFE", `MCP config ${key} must be an object: ${configPath}`);
+  if (
+    mapValue &&
+    (mapValue.kind !== "object" || !isMcpRecord(mapValue.value))
+  ) {
+    fail(
+      "MCP_CONFIG_UNSAFE",
+      `MCP config ${key} must be an object: ${configPath}`,
+    );
   }
 
   const server = mapValue ? property(mapValue, provider.name) : undefined;
   if (server) {
     if (!exactEntry(server.value.value, expected)) {
-      fail("MCP_CONFIG_CONFLICT", `MCP server already exists with different settings: ${provider.name}`);
+      fail(
+        "MCP_CONFIG_CONFLICT",
+        `MCP server already exists with different settings: ${provider.name}`,
+      );
     }
   } else {
     changed = true;
     if (!mapProperty) {
       const map = Object.create(null) as McpRecord;
-      Object.defineProperty(map, provider.name, { value: expected, enumerable: true, configurable: true, writable: true });
+      Object.defineProperty(map, provider.name, {
+        value: expected,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
       if (!stamp) {
         afterText = `${JSON.stringify({ [key]: { [provider.name]: expected } }, null, 2)}\n`;
       } else {
@@ -919,18 +1338,35 @@ async function readConfig(targetDir: string, host: McpHost, provider: McpProvide
           ? leadingIndent(original ?? "", rootNode.properties[0]!.keyStart)
           : null;
         const propertyIndent = rootPropertyIndent ?? "  ";
-        const closeIndent = leadingIndent(original ?? "", rootNode.end - 1) ?? "";
-        afterText = addJsoncProperty(afterText, rootNode, key, map, propertyIndent, closeIndent);
+        const closeIndent =
+          leadingIndent(original ?? "", rootNode.end - 1) ?? "";
+        afterText = addJsoncProperty(
+          afterText,
+          rootNode,
+          key,
+          map,
+          propertyIndent,
+          closeIndent,
+        );
       }
       diffPath = `/${key}`;
       diffAfter = { [provider.name]: expected };
     } else {
       const nested = mapValue!;
-      const parentIndent = leadingIndent(original ?? "", mapProperty.keyStart) ?? "";
+      const parentIndent =
+        leadingIndent(original ?? "", mapProperty.keyStart) ?? "";
       const childPropertyIndent = nested.properties?.length
-        ? leadingIndent(original ?? "", nested.properties[0]!.keyStart) ?? `${parentIndent}  `
+        ? (leadingIndent(original ?? "", nested.properties[0]!.keyStart) ??
+          `${parentIndent}  `)
         : `${parentIndent}  `;
-      afterText = addJsoncProperty(afterText, nested, provider.name, expected, childPropertyIndent, parentIndent);
+      afterText = addJsoncProperty(
+        afterText,
+        nested,
+        provider.name,
+        expected,
+        childPropertyIndent,
+        parentIndent,
+      );
     }
   }
 
@@ -951,33 +1387,51 @@ async function readConfig(targetDir: string, host: McpHost, provider: McpProvide
   };
 }
 
-async function makePlan(options: McpInstallOptions, catalogSnapshot?: CatalogSnapshot, hostReadiness?: HostReadiness): Promise<InstallPlan> {
-  if (!HOSTS.includes(options.host)) fail("MCP_HOST_UNSUPPORTED", `Unsupported MCP host: ${String(options.host)}`);
+async function makePlan(
+  options: McpInstallOptions,
+  catalogSnapshot?: CatalogSnapshot,
+  hostReadiness?: HostReadiness,
+): Promise<InstallPlan> {
+  if (!HOSTS.includes(options.host))
+    fail(
+      "MCP_HOST_UNSUPPORTED",
+      `Unsupported MCP host: ${String(options.host)}`,
+    );
   const schemaDir = path.resolve(options.schemaDir);
   const targetDir = path.resolve(options.targetDir);
   await assertSafeDirectoryChain(targetDir, false);
-  const catalog = catalogSnapshot ?? await readCatalog(schemaDir);
+  const catalog = catalogSnapshot ?? (await readCatalog(schemaDir));
   const provider = findProvider(catalog, options.providerName);
-  const readiness = hostReadiness ?? await resolveHostReadiness(options.host, targetDir);
+  const readiness =
+    hostReadiness ?? (await resolveHostReadiness(options.host, targetDir));
   const config = await readConfig(targetDir, options.host, provider);
-  const hostPath = options.host === "pi" || options.host === "atomic" ? targetDir : path.dirname(config!.path);
+  const hostPath =
+    options.host === "pi" || options.host === "atomic"
+      ? targetDir
+      : path.dirname(config!.path);
   const configPath = config!.path;
   const changed = config!.changed;
   const diff: McpInstallDiff[] = !config!.changed
     ? []
-    : [{
-      operation: "add",
-      path: config!.pointer,
-      before: null,
-      after: config!.diffAfter,
-      configCreated: config!.configCreated,
-    }];
+    : [
+        {
+          operation: "add",
+          path: config!.pointer,
+          before: null,
+          after: config!.diffAfter,
+          configCreated: config!.configCreated,
+        },
+      ];
   const preview: McpInstallPreview = {
     provider,
     host: options.host,
     installMode: readiness.info.installMode,
-    ...(readiness.info.prerequisite ? { prerequisite: readiness.info.prerequisite } : {}),
-    ...(readiness.info.diagnostic ? { diagnostic: readiness.info.diagnostic } : {}),
+    ...(readiness.info.prerequisite
+      ? { prerequisite: readiness.info.prerequisite }
+      : {}),
+    ...(readiness.info.diagnostic
+      ? { diagnostic: readiness.info.diagnostic }
+      : {}),
     hostPath,
     configPath,
     changed,
@@ -985,13 +1439,19 @@ async function makePlan(options: McpInstallOptions, catalogSnapshot?: CatalogSna
     resultingConfig: !config!.changed ? null : config!.afterText,
     catalogPath: catalog.path,
   };
-  return { preview: freezeDeep(preview), catalog, config, piAdapterEvidence: readiness.piAdapterEvidence };
+  return {
+    preview: freezeDeep(preview),
+    catalog,
+    config,
+    piAdapterEvidence: readiness.piAdapterEvidence,
+  };
 }
 
 function freezeDeep<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>)) freezeDeep(child);
+    for (const child of Object.values(value as Record<string, unknown>))
+      freezeDeep(child);
   }
   return value;
 }
@@ -1000,13 +1460,27 @@ function isInteractiveTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
 
-async function verifyPlanCurrent(options: McpInstallOptions, original: InstallPlan): Promise<InstallPlan> {
+async function verifyPlanCurrent(
+  options: McpInstallOptions,
+  original: InstallPlan,
+): Promise<InstallPlan> {
   const current = await makePlan(options);
-  if (JSON.stringify(current.preview) !== JSON.stringify(original.preview)
-    || !sameSnapshot(original.catalog.stamp, current.catalog.stamp)
-    || !sameSnapshot(original.config?.stamp ?? null, current.config?.stamp ?? null)
-    || !samePiAdapterEvidence(original.piAdapterEvidence, current.piAdapterEvidence)) {
-    fail("MCP_CONFIG_CHANGED", "MCP catalog or host config changed during approval; preview and approve again");
+  if (
+    JSON.stringify(current.preview) !== JSON.stringify(original.preview) ||
+    !sameSnapshot(original.catalog.stamp, current.catalog.stamp) ||
+    !sameSnapshot(
+      original.config?.stamp ?? null,
+      current.config?.stamp ?? null,
+    ) ||
+    !samePiAdapterEvidence(
+      original.piAdapterEvidence,
+      current.piAdapterEvidence,
+    )
+  ) {
+    fail(
+      "MCP_CONFIG_CHANGED",
+      "MCP catalog or host config changed during approval; preview and approve again",
+    );
   }
   return current;
 }
@@ -1017,7 +1491,8 @@ async function createSafeDirectories(directory: string): Promise<void> {
   for (;;) {
     const info = await lstatOrNull(current);
     if (!info) missing.push(current);
-    else if (info.isSymbolicLink() || !info.isDirectory()) fail("MCP_HOST_UNSAFE", `Unsafe host directory: ${current}`);
+    else if (info.isSymbolicLink() || !info.isDirectory())
+      fail("MCP_HOST_UNSAFE", `Unsafe host directory: ${current}`);
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -1029,13 +1504,18 @@ async function createSafeDirectories(directory: string): Promise<void> {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
     const info = await lstatOrNull(directoryPath);
-    if (!info || info.isSymbolicLink() || !info.isDirectory()) fail("MCP_HOST_UNSAFE", `Unsafe host directory: ${directoryPath}`);
+    if (!info || info.isSymbolicLink() || !info.isDirectory())
+      fail("MCP_HOST_UNSAFE", `Unsafe host directory: ${directoryPath}`);
   }
 }
 
 async function verifyConfigUnchanged(config: ConfigSnapshot): Promise<void> {
   const current = await readRegularFile(config.path, "MCP host config");
-  if (!sameSnapshot(config.stamp, current)) fail("MCP_CONFIG_CHANGED", `MCP host config changed before install: ${config.path}`);
+  if (!sameSnapshot(config.stamp, current))
+    fail(
+      "MCP_CONFIG_CHANGED",
+      `MCP host config changed before install: ${config.path}`,
+    );
 }
 
 async function writeConfig(config: ConfigSnapshot): Promise<void> {
@@ -1065,7 +1545,10 @@ async function writeConfig(config: ConfigSnapshot): Promise<void> {
     }
   } catch (error) {
     if (error instanceof OpsxError) throw error;
-    fail("MCP_CONFIG_WRITE_FAILED", `Could not safely install MCP config: ${config.path}`);
+    fail(
+      "MCP_CONFIG_WRITE_FAILED",
+      `Could not safely install MCP config: ${config.path}`,
+    );
   } finally {
     await handle?.close().catch(() => undefined);
     await unlink(temporary).catch(() => undefined);
@@ -1073,13 +1556,17 @@ async function writeConfig(config: ConfigSnapshot): Promise<void> {
 }
 
 /** Lists every entry after validating the complete declared schema-local catalog. */
-export async function listMcpCatalog(options: McpCatalogOptions): Promise<McpCatalog> {
+export async function listMcpCatalog(
+  options: McpCatalogOptions,
+): Promise<McpCatalog> {
   const catalog = await readCatalog(options.schemaDir);
   return catalogForInspection(catalog, options.targetDir);
 }
 
 /** Inspects one declared provider without making network requests. */
-export async function inspectMcpProvider(options: McpProviderOptions): Promise<McpProvider> {
+export async function inspectMcpProvider(
+  options: McpProviderOptions,
+): Promise<McpProvider> {
   const catalog = await readCatalog(options.schemaDir);
   const provider = findProvider(catalog, options.providerName);
   if (!options.targetDir) return provider;
@@ -1088,12 +1575,19 @@ export async function inspectMcpProvider(options: McpProviderOptions): Promise<M
   const readiness = await resolveAllHostReadiness(targetDir);
   return {
     ...provider,
-    hostStatus: await inspectProviderHosts(catalog, provider, targetDir, readiness),
+    hostStatus: await inspectProviderHosts(
+      catalog,
+      provider,
+      targetDir,
+      readiness,
+    ),
   };
 }
 
 /** Previews the selected host config path and the exact single-entry config diff. */
-export async function previewMcpInstall(options: McpInstallOptions): Promise<McpInstallPreview> {
+export async function previewMcpInstall(
+  options: McpInstallOptions,
+): Promise<McpInstallPreview> {
   return (await makePlan(options)).preview;
 }
 
@@ -1101,7 +1595,9 @@ export async function previewMcpInstall(options: McpInstallOptions): Promise<Mcp
  * Applies only after a fresh interactive TTY check and an in-call approval of
  * the exact current preview. Approval booleans/tokens/TTY flags are not inputs.
  */
-export async function installMcpProvider(options: McpApplyOptions): Promise<McpInstallResult> {
+export async function installMcpProvider(
+  options: McpApplyOptions,
+): Promise<McpInstallResult> {
   const plan = await makePlan(options);
   if (plan.preview.installMode === "guided-only") {
     return { status: "guided-only", preview: plan.preview };
@@ -1109,22 +1605,34 @@ export async function installMcpProvider(options: McpApplyOptions): Promise<McpI
   if (plan.preview.installMode === "prerequisite-needed") {
     fail(
       plan.preview.diagnostic?.code ?? "MCP_HOST_PREREQUISITE_REQUIRED",
-      plan.preview.diagnostic?.message ?? "The host MCP prerequisite is not verified; installation is unavailable",
+      plan.preview.diagnostic?.message ??
+        "The host MCP prerequisite is not verified; installation is unavailable",
     );
   }
   if (!isInteractiveTerminal()) {
-    fail("MCP_APPROVAL_TTY_REQUIRED", "MCP installation requires an interactive TTY; use Settings to approve this provider");
+    fail(
+      "MCP_APPROVAL_TTY_REQUIRED",
+      "MCP installation requires an interactive TTY; use Settings to approve this provider",
+    );
   }
   if (!options.approve || typeof options.approve !== "function") {
-    fail("MCP_APPROVAL_REQUIRED", "MCP installation requires an interactive provider-safety approval callback");
+    fail(
+      "MCP_APPROVAL_REQUIRED",
+      "MCP installation requires an interactive provider-safety approval callback",
+    );
   }
 
   const approved = await options.approve(plan.preview);
-  if (typeof approved !== "boolean") fail("MCP_APPROVAL_INVALID", "Provider approval must return an explicit yes or no");
+  if (typeof approved !== "boolean")
+    fail(
+      "MCP_APPROVAL_INVALID",
+      "Provider approval must return an explicit yes or no",
+    );
   if (!approved) return { status: "denied", preview: plan.preview };
 
   const current = await verifyPlanCurrent(options, plan);
-  if (!current.config || !current.preview.changed) return { status: "unchanged", preview: current.preview };
+  if (!current.config || !current.preview.changed)
+    return { status: "unchanged", preview: current.preview };
   await writeConfig(current.config);
   return { status: "installed", preview: current.preview };
 }

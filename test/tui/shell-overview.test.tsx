@@ -7,19 +7,30 @@ import { Overview } from "../../src/tui/overview.tsx";
 import { PendingRead, tuiTextColor } from "../../src/tui/theme.tsx";
 
 test("independent Overview reads retain available data and expose partial states", async () => {
-  const setup = await testRender(<Overview
-    specifications={{ status: "loaded", value: { specifications: 2, requirements: 3 } }}
-    activeChanges={{ status: "error", message: "inventory unavailable" }}
-    completedChanges={{ status: "pending" }}
-    reducedMotion noColor
-  />, { width: 60, height: 18 });
+  const setup = await testRender(
+    <Overview
+      specifications={{
+        status: "loaded",
+        value: { specifications: 2, requirements: 3 },
+      }}
+      activeChanges={{ status: "error", message: "inventory unavailable" }}
+      completedChanges={{ status: "pending" }}
+      reducedMotion
+      noColor
+    />,
+    { width: 60, height: 18 },
+  );
   try {
     await setup.renderOnce();
     const first = setup.captureCharFrame();
     expect(first).toContain("Specifications: 2");
     expect(first).toContain("Requirements: 3");
     expect(first).toContain("inventory unavailable");
-    await act(async () => { setup.mockInput.pressKey("END"); await Bun.sleep(30); await setup.renderOnce(); });
+    await act(async () => {
+      setup.mockInput.pressKey("END");
+      await Bun.sleep(30);
+      await setup.renderOnce();
+    });
     expect(setup.captureCharFrame()).toContain("Loading completed changes");
   } finally {
     act(() => setup.renderer.destroy());
@@ -27,21 +38,41 @@ test("independent Overview reads retain available data and expose partial states
 });
 
 test("Overview scroll reaches retained history after a long active list", async () => {
-  const activeChanges: ChangeSummary[] = Array.from({ length: 10 }, (_, index) => ({
-    name: "active-change-" + String(index + 1).padStart(2, "0"),
-    status: "in-progress", schema: "schema-v1", artifacts: [], tasks: null,
-  }));
-  const setup = await testRender(<Overview
-    specifications={{ status: "loaded", value: { specifications: 2, requirements: 3 } }}
-    activeChanges={{ status: "loaded", value: activeChanges }}
-    completedChanges={{ status: "loaded", value: [{ name: "archived-tail" }] }}
-    reducedMotion noColor
-  />, { width: 60, height: 18 });
+  const activeChanges: ChangeSummary[] = Array.from(
+    { length: 10 },
+    (_, index) => ({
+      name: "active-change-" + String(index + 1).padStart(2, "0"),
+      status: "in-progress",
+      schema: "schema-v1",
+      artifacts: [],
+      tasks: null,
+    }),
+  );
+  const setup = await testRender(
+    <Overview
+      specifications={{
+        status: "loaded",
+        value: { specifications: 2, requirements: 3 },
+      }}
+      activeChanges={{ status: "loaded", value: activeChanges }}
+      completedChanges={{
+        status: "loaded",
+        value: [{ name: "archived-tail" }],
+      }}
+      reducedMotion
+      noColor
+    />,
+    { width: 60, height: 18 },
+  );
   try {
     await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("active-change-01");
     expect(setup.captureCharFrame()).not.toContain("archived-tail");
-    await act(async () => { setup.mockInput.pressKey("END"); await Bun.sleep(30); await setup.renderOnce(); });
+    await act(async () => {
+      setup.mockInput.pressKey("END");
+      await Bun.sleep(30);
+      await setup.renderOnce();
+    });
     expect(setup.captureCharFrame()).toContain("archived-tail");
   } finally {
     act(() => setup.renderer.destroy());
@@ -49,13 +80,26 @@ test("Overview scroll reaches retained history after a long active list", async 
 });
 
 test("unknown totals have no fabricated progress bar", async () => {
-  const active: ChangeSummary = { name: "unmeasured", status: "in-progress", schema: "schema-v1", artifacts: [], tasks: null };
-  const setup = await testRender(<Overview
-    specifications={{ status: "loaded", value: { specifications: 0, requirements: 0 } }}
-    activeChanges={{ status: "loaded", value: [active] }}
-    completedChanges={{ status: "loaded", value: [] }}
-    reducedMotion noColor
-  />, { width: 100, height: 32 });
+  const active: ChangeSummary = {
+    name: "unmeasured",
+    status: "in-progress",
+    schema: "schema-v1",
+    artifacts: [],
+    tasks: null,
+  };
+  const setup = await testRender(
+    <Overview
+      specifications={{
+        status: "loaded",
+        value: { specifications: 0, requirements: 0 },
+      }}
+      activeChanges={{ status: "loaded", value: [active] }}
+      completedChanges={{ status: "loaded", value: [] }}
+      reducedMotion
+      noColor
+    />,
+    { width: 100, height: 32 },
+  );
   try {
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
@@ -82,13 +126,18 @@ function AnimatedOverviewHarness() {
     artifacts: [],
     tasks: { total: 4, complete: checked, remaining: 4 - checked },
   };
-  return <Overview
-    specifications={{ status: "loaded", value: { specifications: 1, requirements: 1 } }}
-    activeChanges={{ status: "loaded", value: [active] }}
-    completedChanges={{ status: "loaded", value: [] }}
-    reducedMotion={false}
-    noColor={false}
-  />;
+  return (
+    <Overview
+      specifications={{
+        status: "loaded",
+        value: { specifications: 1, requirements: 1 },
+      }}
+      activeChanges={{ status: "loaded", value: [active] }}
+      completedChanges={{ status: "loaded", value: [] }}
+      reducedMotion={false}
+      noColor={false}
+    />
+  );
 }
 
 function implementationProgressBar(frame: string): string | undefined {
@@ -96,10 +145,15 @@ function implementationProgressBar(frame: string): string | undefined {
 }
 
 test("Overview animates only when task progress changes", async () => {
-  const setup = await testRender(<AnimatedOverviewHarness />, { width: 100, height: 30 });
+  const setup = await testRender(<AnimatedOverviewHarness />, {
+    width: 100,
+    height: 30,
+  });
   engine.attach(setup.renderer);
   try {
-    await act(async () => { await setup.renderOnce(); });
+    await act(async () => {
+      await setup.renderOnce();
+    });
     const initialFrame = setup.captureCharFrame();
     const initialBar = implementationProgressBar(initialFrame);
     expect(initialFrame).toContain("1/4");
@@ -116,7 +170,9 @@ test("Overview animates only when task progress changes", async () => {
       engine.update(300);
       await setup.renderOnce();
     });
-    expect(implementationProgressBar(setup.captureCharFrame())).toBe(initialBar);
+    expect(implementationProgressBar(setup.captureCharFrame())).toBe(
+      initialBar,
+    );
 
     await act(async () => {
       refreshAnimatedTasks("schema-v2", 3);
@@ -127,13 +183,25 @@ test("Overview animates only when task progress changes", async () => {
     expect(changedFrame).toContain("3/4");
     expect(changedBar).toBe(initialBar);
 
-    await act(async () => { engine.update(130); });
-    await act(async () => { await setup.renderOnce(); });
-    expect(implementationProgressBar(setup.captureCharFrame())).not.toBe(changedBar);
+    await act(async () => {
+      engine.update(130);
+    });
+    await act(async () => {
+      await setup.renderOnce();
+    });
+    expect(implementationProgressBar(setup.captureCharFrame())).not.toBe(
+      changedBar,
+    );
 
-    await act(async () => { engine.update(260); });
-    await act(async () => { await setup.renderOnce(); });
-    expect(implementationProgressBar(setup.captureCharFrame())).toBe("[============----]");
+    await act(async () => {
+      engine.update(260);
+    });
+    await act(async () => {
+      await setup.renderOnce();
+    });
+    expect(implementationProgressBar(setup.captureCharFrame())).toBe(
+      "[============----]",
+    );
   } finally {
     act(() => setup.renderer.destroy());
     engine.detach();
@@ -141,13 +209,15 @@ test("Overview animates only when task progress changes", async () => {
 });
 
 test("PendingRead animates only while unresolved and reduced motion stays static", async () => {
-  let settlePending: () => void = () => { };
+  let settlePending: () => void = () => {};
   function PendingHarness() {
     const [pending, setPending] = useState(true);
     settlePending = () => setPending(false);
-    return pending
-      ? <PendingRead label="Loading active changes" reducedMotion />
-      : <text>Active changes loaded</text>;
+    return pending ? (
+      <PendingRead label="Loading active changes" reducedMotion />
+    ) : (
+      <text>Active changes loaded</text>
+    );
   }
 
   const setup = await testRender(<PendingHarness />, { width: 60, height: 18 });
@@ -156,7 +226,9 @@ test("PendingRead animates only while unresolved and reduced motion stays static
     const initialFrame = setup.captureCharFrame();
     expect(initialFrame).toContain("[loading] Loading active changes");
 
-    await act(async () => { settlePending(); });
+    await act(async () => {
+      settlePending();
+    });
     await setup.renderOnce();
     const settledFrame = setup.captureCharFrame();
     expect(settledFrame).toContain("Active changes loaded");
@@ -169,10 +241,15 @@ test("PendingRead animates only while unresolved and reduced motion stays static
 test("NO_COLOR keeps pending indicators static and disables shared text color", async () => {
   const previous = process.env.NO_COLOR;
   process.env.NO_COLOR = "";
-  const setup = await testRender(<PendingRead label="Waiting for sections" />, { width: 60, height: 18 });
+  const setup = await testRender(<PendingRead label="Waiting for sections" />, {
+    width: 60,
+    height: 18,
+  });
   try {
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("[loading] Waiting for sections");
+    expect(setup.captureCharFrame()).toContain(
+      "[loading] Waiting for sections",
+    );
     expect(tuiTextColor("accent")).toBeUndefined();
   } finally {
     act(() => setup.renderer.destroy());
