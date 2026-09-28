@@ -38,6 +38,6 @@ bunx opsx-schema change archive account-export
 
 Commands that change files **preview only** on the first run. Review the preview, then repeat the same command with its fresh `--apply-token <token>` to apply. Installation and switching are separate steps; installing a schema does not select it. The archive example also needs its preview token before it changes anything.
 
-See [workflows and schema choices](./docs/workflows.md) for all command families, what each schema is for, and a start-to-finish CLI path. The [command reference](./docs/commands.md) covers flags, output and approval rules. Contributors: [resource overview](./resources/README.md), [contribution guide](./resources/CONTRIBUTING.md), and [CI checks](./docs/ci.md).
+See [workflows and schema choices](./docs/workflows.md) for all command families, what each schema is for, and a start-to-finish CLI path. The [command reference](./docs/commands.md) covers flags, output and approval rules. Contributors: [resource overview](./resources/README.md) and [contribution guide](./resources/CONTRIBUTING.md).
 
 The schema collection extends [Hari Krishnan’s OpenSpec Custom Schemas](https://github.com/intent-driven-dev/openspec-schemas) ([resource license](./resources/LICENSE)); the CLI is MIT licensed.
