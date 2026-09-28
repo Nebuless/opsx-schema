@@ -13,15 +13,20 @@ export const TUI_COLORS = {
 export type TuiTone = keyof typeof TUI_COLORS;
 
 export function noColorEnabled(override?: boolean): boolean {
-  return override ?? (process.env.NO_COLOR !== undefined);
+  return override ?? process.env.NO_COLOR !== undefined;
 }
 
 export function reducedMotionEnabled(override?: boolean): boolean {
   if (override !== undefined) return override;
-  return ["1", "true", "yes"].includes((process.env.REDUCED_MOTION ?? "").toLowerCase());
+  return ["1", "true", "yes"].includes(
+    (process.env.REDUCED_MOTION ?? "").toLowerCase(),
+  );
 }
 
-export function tuiTextColor(tone: TuiTone, noColor = noColorEnabled()): string | undefined {
+export function tuiTextColor(
+  tone: TuiTone,
+  noColor = noColorEnabled(),
+): string | undefined {
   return noColor ? undefined : TUI_COLORS[tone];
 }
 
@@ -54,7 +59,8 @@ export function PendingRead({
       ease: "linear",
       loop: true,
       onUpdate: ({ targets }) => {
-        const nextFrame = Math.floor(targets[0]!.value) % ACTIVITY_FRAMES.length;
+        const nextFrame =
+          Math.floor(targets[0]!.value) % ACTIVITY_FRAMES.length;
         if (nextFrame !== lastFrame) {
           lastFrame = nextFrame;
           setFrame(nextFrame);
@@ -62,7 +68,9 @@ export function PendingRead({
       },
     });
     timeline.play();
-    return () => { timeline.pause(); };
+    return () => {
+      timeline.pause();
+    };
   }, [animate, timeline]);
 
   return (

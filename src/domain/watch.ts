@@ -13,7 +13,10 @@ const MAX_INPUT_BYTES = 64 * 1024 * 1024;
 const HASH_BUFFER_BYTES = 64 * 1024;
 
 type ChangeReason = "event" | "reconcile";
-type WatchListener = (eventType: string, filename: string | Buffer | null) => void;
+type WatchListener = (
+  eventType: string,
+  filename: string | Buffer | null,
+) => void;
 type WatchDirectory = (directory: string, listener: WatchListener) => FSWatcher;
 type Timer = NodeJS.Timeout;
 
@@ -27,11 +30,17 @@ export function watchProject(
   root: string,
   onChange: (reason: ChangeReason) => void,
   onError: (error: Error) => void,
-  options: { debounceMs?: number; reconcileMs?: number; watchDirectory?: WatchDirectory } = {},
+  options: {
+    debounceMs?: number;
+    reconcileMs?: number;
+    watchDirectory?: WatchDirectory;
+  } = {},
 ): ProjectSubscription {
   const debounceMs = options.debounceMs ?? 120;
   const reconcileMs = options.reconcileMs ?? 2_000;
-  const createWatcher = options.watchDirectory ?? ((directory, listener) => watch(directory, listener));
+  const createWatcher =
+    options.watchDirectory ??
+    ((directory, listener) => watch(directory, listener));
   const watchers = new Map<string, FSWatcher>();
   const hashBuffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
   let closed = false;
@@ -43,7 +52,8 @@ export function watchProject(
   let queuedReason: ChangeReason | undefined;
 
   function reportError(error: unknown) {
-    if (!closed) onError(error instanceof Error ? error : new Error(String(error)));
+    if (!closed)
+      onError(error instanceof Error ? error : new Error(String(error)));
   }
 
   function queueReason(reason: ChangeReason) {
@@ -71,7 +81,12 @@ export function watchProject(
       try {
         const watcher = createWatcher(directory, (_eventType, filename) => {
           if (closed) return;
-          if (directory === root && filename != null && filename.toString() !== "openspec") return;
+          if (
+            directory === root &&
+            filename != null &&
+            filename.toString() !== "openspec"
+          )
+            return;
           scheduleEvent();
         });
         watcher.on("error", reportError);
@@ -82,7 +97,10 @@ export function watchProject(
     }
   }
 
-  async function readInputInventory(): Promise<{ directories: Set<string>; signature: string }> {
+  async function readInputInventory(): Promise<{
+    directories: Set<string>;
+    signature: string;
+  }> {
     const openspecRoot = path.join(root, "openspec");
     const directories = new Set<string>([root]);
     const stack = [openspecRoot];
@@ -101,7 +119,10 @@ export function watchProject(
         throw error;
       }
       if (!info.isDirectory() || info.isSymbolicLink()) {
-        throw new OpsxError("UNSAFE_PATH", `OpenSpec watcher refuses a non-directory or symlink: ${directory}`);
+        throw new OpsxError(
+          "UNSAFE_PATH",
+          `OpenSpec watcher refuses a non-directory or symlink: ${directory}`,
+        );
       }
 
       let names;
@@ -111,24 +132,39 @@ export function watchProject(
         if (isMissing(error)) continue;
         throw error;
       }
-      const afterRead = await lstat(directory, { bigint: true }).catch(error => {
-        if (isMissing(error)) return undefined;
-        throw error;
-      });
+      const afterRead = await lstat(directory, { bigint: true }).catch(
+        (error) => {
+          if (isMissing(error)) return undefined;
+          throw error;
+        },
+      );
       if (!afterRead) continue;
-      if (!afterRead.isDirectory() || afterRead.isSymbolicLink() || !sameIdentity(info, afterRead)) {
-        throw new OpsxError("UNSAFE_PATH", `OpenSpec watcher refuses a changed directory path: ${directory}`);
+      if (
+        !afterRead.isDirectory() ||
+        afterRead.isSymbolicLink() ||
+        !sameIdentity(info, afterRead)
+      ) {
+        throw new OpsxError(
+          "UNSAFE_PATH",
+          `OpenSpec watcher refuses a changed directory path: ${directory}`,
+        );
       }
 
       directories.add(directory);
       if (directories.size > MAX_WATCH_DIRECTORIES) {
-        throw new Error(`OpenSpec directory watch limit exceeded (${MAX_WATCH_DIRECTORIES}).`);
+        throw new Error(
+          `OpenSpec directory watch limit exceeded (${MAX_WATCH_DIRECTORIES}).`,
+        );
       }
-      entries.push(`d\0${path.relative(openspecRoot, directory).split(path.sep).join("/")}\0`);
+      entries.push(
+        `d\0${path.relative(openspecRoot, directory).split(path.sep).join("/")}\0`,
+      );
 
       for (const name of names) {
         if (++entryCount > MAX_INVENTORY_ENTRIES) {
-          throw new Error(`OpenSpec input inventory entry limit exceeded (${MAX_INVENTORY_ENTRIES}).`);
+          throw new Error(
+            `OpenSpec input inventory entry limit exceeded (${MAX_INVENTORY_ENTRIES}).`,
+          );
         }
         const filePath = path.join(directory, name);
         let child;
@@ -139,29 +175,44 @@ export function watchProject(
           throw error;
         }
         if (child.isSymbolicLink()) {
-          throw new OpsxError("UNSAFE_PATH", `OpenSpec watcher refuses a symlink: ${filePath}`);
+          throw new OpsxError(
+            "UNSAFE_PATH",
+            `OpenSpec watcher refuses a symlink: ${filePath}`,
+          );
         }
         if (child.isDirectory()) {
           stack.push(filePath);
           continue;
         }
         if (!child.isFile()) {
-          throw new OpsxError("UNSAFE_PATH", `OpenSpec watcher refuses a non-regular input: ${filePath}`);
+          throw new OpsxError(
+            "UNSAFE_PATH",
+            `OpenSpec watcher refuses a non-regular input: ${filePath}`,
+          );
         }
         if (++fileCount > MAX_INPUT_FILES) {
-          throw new Error(`OpenSpec input inventory file limit exceeded (${MAX_INPUT_FILES}).`);
+          throw new Error(
+            `OpenSpec input inventory file limit exceeded (${MAX_INPUT_FILES}).`,
+          );
         }
         if (child.size > BigInt(MAX_INPUT_FILE_BYTES)) {
-          throw new OpsxError("UNSAFE_PATH", `OpenSpec input exceeds the ${MAX_INPUT_FILE_BYTES}-byte inventory limit: ${filePath}`);
+          throw new OpsxError(
+            "UNSAFE_PATH",
+            `OpenSpec input exceeds the ${MAX_INPUT_FILE_BYTES}-byte inventory limit: ${filePath}`,
+          );
         }
 
         const content = await digestFile(filePath, child);
         if (!content) continue;
         totalBytes += content.size;
         if (totalBytes > MAX_INPUT_BYTES) {
-          throw new Error(`OpenSpec input inventory byte limit exceeded (${MAX_INPUT_BYTES}).`);
+          throw new Error(
+            `OpenSpec input inventory byte limit exceeded (${MAX_INPUT_BYTES}).`,
+          );
         }
-        entries.push(`f\0${path.relative(openspecRoot, filePath).split(path.sep).join("/")}\0${content.size}\0${content.digest}\0`);
+        entries.push(
+          `f\0${path.relative(openspecRoot, filePath).split(path.sep).join("/")}\0${content.size}\0${content.digest}\0`,
+        );
       }
     }
 
@@ -171,35 +222,64 @@ export function watchProject(
     return { directories, signature: signature.digest("hex") };
   }
 
-  async function digestFile(filePath: string, expected: BigIntStats): Promise<{ size: number; digest: string } | undefined> {
+  async function digestFile(
+    filePath: string,
+    expected: BigIntStats,
+  ): Promise<{ size: number; digest: string } | undefined> {
     let file;
     try {
-      file = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+      file = await open(
+        filePath,
+        constants.O_RDONLY |
+          (constants.O_NOFOLLOW ?? 0) |
+          (constants.O_NONBLOCK ?? 0),
+      );
     } catch (error) {
       if (isMissing(error)) return undefined;
       if ((error as NodeJS.ErrnoException).code === "ELOOP") {
-        throw new OpsxError("UNSAFE_PATH", `OpenSpec watcher refuses a symlink: ${filePath}`);
+        throw new OpsxError(
+          "UNSAFE_PATH",
+          `OpenSpec watcher refuses a symlink: ${filePath}`,
+        );
       }
       throw error;
     }
 
     try {
       const opened = await file.stat({ bigint: true });
-      if (!opened.isFile() || opened.isSymbolicLink() || !sameIdentity(expected, opened)) {
-        throw new OpsxError("UNSAFE_PATH", `OpenSpec input changed to an unsafe path: ${filePath}`);
+      if (
+        !opened.isFile() ||
+        opened.isSymbolicLink() ||
+        !sameIdentity(expected, opened)
+      ) {
+        throw new OpsxError(
+          "UNSAFE_PATH",
+          `OpenSpec input changed to an unsafe path: ${filePath}`,
+        );
       }
       if (opened.size > BigInt(MAX_INPUT_FILE_BYTES)) {
-        throw new OpsxError("UNSAFE_PATH", `OpenSpec input exceeds the ${MAX_INPUT_FILE_BYTES}-byte inventory limit: ${filePath}`);
+        throw new OpsxError(
+          "UNSAFE_PATH",
+          `OpenSpec input exceeds the ${MAX_INPUT_FILE_BYTES}-byte inventory limit: ${filePath}`,
+        );
       }
 
       const hash = createHash("sha256");
       let size = 0;
       for (;;) {
-        const { bytesRead } = await file.read(hashBuffer, 0, hashBuffer.length, null);
+        const { bytesRead } = await file.read(
+          hashBuffer,
+          0,
+          hashBuffer.length,
+          null,
+        );
         if (bytesRead === 0) break;
         size += bytesRead;
         if (size > MAX_INPUT_FILE_BYTES) {
-          throw new OpsxError("UNSAFE_PATH", `OpenSpec input exceeds the ${MAX_INPUT_FILE_BYTES}-byte inventory limit: ${filePath}`);
+          throw new OpsxError(
+            "UNSAFE_PATH",
+            `OpenSpec input exceeds the ${MAX_INPUT_FILE_BYTES}-byte inventory limit: ${filePath}`,
+          );
         }
         hash.update(hashBuffer.subarray(0, bytesRead));
       }
@@ -233,7 +313,11 @@ export function watchProject(
           reportError(error);
         }
         if (closed) break;
-        if (signature !== undefined && signature !== lastSignature && pending === undefined) {
+        if (
+          signature !== undefined &&
+          signature !== lastSignature &&
+          pending === undefined
+        ) {
           const changedReason = queuedReason === "event" ? "event" : nextReason;
           lastSignature = signature;
           try {
@@ -288,7 +372,8 @@ export function watchProject(
 }
 
 function isMissing(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  if (typeof error !== "object" || error === null || !("code" in error))
+    return false;
   const code = (error as NodeJS.ErrnoException).code;
   return code === "ENOENT" || code === "ENOTDIR";
 }
