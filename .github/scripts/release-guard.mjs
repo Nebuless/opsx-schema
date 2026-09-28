@@ -139,7 +139,8 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
     throw new Error("Package name and version must match the requested release");
   }
 
-  const headings = [...changelog.matchAll(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})\s*$/gm)];
+  const visibleChangelog = changelog.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
+  const headings = [...visibleChangelog.matchAll(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})\s*$/gm)];
   const matching = headings.filter((heading) => heading[1] === version);
   if (matching.length !== 1) {
     throw new Error("CHANGELOG.md needs exactly one dated matching version entry");
@@ -150,14 +151,14 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
     throw new Error("CHANGELOG.md version entry has an invalid ISO date");
   }
   const sectionStart = heading.index + heading[0].length;
-  const nextHeading = changelog.slice(sectionStart).search(/^## /m);
-  const section = changelog.slice(
+  const nextHeading = visibleChangelog.slice(sectionStart).search(/^## /m);
+  const section = visibleChangelog.slice(
     sectionStart,
     nextHeading === -1 ? undefined : sectionStart + nextHeading,
   );
   const hasNote = section.split(/\r?\n/).some((line) => {
     const trimmed = line.trim();
-    if (!trimmed || /^#{1,6}\s/.test(trimmed) || /^<!--.*-->$/.test(trimmed)) {
+    if (!trimmed || /^#{1,6}\s/.test(trimmed)) {
       return false;
     }
     const listText = trimmed.replace(/^(?:[-*+]\s*|\d+\.\s*)/, "").trim();
@@ -165,7 +166,7 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
       return false;
     }
     const note = listText.replace(/^\[[xX]\]\s*/, "").trim();
-    return Boolean(note && !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note));
+    return Boolean(note && !/^#{1,6}\s/.test(note) && !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note));
   });
   if (!hasNote) {
     throw new Error("CHANGELOG.md version entry needs substantive release notes");
