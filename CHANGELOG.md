@@ -5,6 +5,11 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+### Fixed
+
+- Wait for post-publication npm registry visibility before strict release
+  verification, without retrying publication or weakening provenance checks.
+
 ## [0.1.1] - 2026-09-28
 
 ### Added

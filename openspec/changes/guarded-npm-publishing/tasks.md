@@ -13,6 +13,13 @@
 - [x] 3.1 Document the version-and-notes PR, release dry run, external GitHub environment and npm trusted-publisher setup, and manual investigation after partial success, without claiming the setup is already active. Proof: review `docs/ci.md` and release guide links against the workflow and actual check names.
 - [ ] 3.2 Run focused release and CI tests, `bun run check` with OpenSpec 1.12.0, `git diff --check`, and `openspec validate guarded-npm-publishing --type change --strict`. On a protected commit, exercise the real workflow's dry-run mode with no tag or publication; do not initiate a live publish as part of this change.
 
+## 4. Post-publication registry visibility correction
+
+- [x] 4.1 Bound exact-version visibility reads to five minutes, retry only npm `E404`, and reject terminal registry errors or mismatched version output before installation. Preserve single publication and strict provenance/tag gates. Proof: real workflow-shell regression for delayed visibility, timeout, non-E404, and wrong version.
+- [x] 4.2 Run focused release/CI tests, local quality checks, strict change validation, and read-only published `0.1.1` signature/provenance verification. Update release guide and unreleased changelog. Do not publish or recover a tag.
+
 ## Next Handoff
 
 Local tests, the full check, and strict validation passed. Task 3.2 remains open until a reviewed protected `main` commit with an unused version and substantive notes can run the real release workflow in dry-run mode. A real publication needs separate operator action and verified external setup.
+
+The local visibility correction is complete. Focused release/CI tests passed (35 tests), independent read-only review returned PASS with no blocking defects, and the updated verification shell passed against published `0.1.1` with clean signatures and exact-source Sigstore provenance. Local quality/test/resource checks all passed in captured output; the aggregate tool wrapper reported a timeout without a numeric exit status. This correction did not commit, push, publish, or recover a tag. Task 3.2 remains separate; do not archive the change while it is unchecked.

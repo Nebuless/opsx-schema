@@ -167,7 +167,21 @@ jobs:
           PROVENANCE_MARKER: ${{ runner.temp }}/verified-release-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          npm view "opsx-schema@$EXPECTED_VERSION" version --json > "$VERSION_JSON"
+          timeout --kill-after=5s 5m bash -c '
+            until npm view "opsx-schema@$EXPECTED_VERSION" version --json --prefer-online --fetch-retries=0 --fetch-timeout=10000 > "$VERSION_JSON" 2> "$VERSION_JSON.stderr"; do
+              cat "$VERSION_JSON.stderr" >&2
+              grep -Eq "^npm error code E404[[:space:]]*$" "$VERSION_JSON.stderr" || exit 1
+              sleep 5
+            done
+          ' || {
+            echo "::error::Registry visibility failed for opsx-schema@$EXPECTED_VERSION; investigate without republishing or tagging." >&2
+            exit 1
+          }
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { assertPublishedVersion } from "./.github/scripts/release-guard.mjs";
+            assertPublishedVersion(JSON.parse(readFileSync(process.env.VERSION_JSON, "utf8")), process.env.EXPECTED_VERSION);
+          '
           verify_directory="$(mktemp -d)"
           trap 'rm -rf "$verify_directory"' EXIT
           cd "$verify_directory"
