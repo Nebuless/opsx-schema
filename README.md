@@ -1,69 +1,43 @@
 # opsx-schema
 
-I liked OpenSpec's durable change records, but I also use other skills. I built `opsx-schema` to make repeatable workflows easier to set up and see from one place.
+Choose an [OpenSpec](https://github.com/Fission-AI/OpenSpec) workflow, inspect your changes, and manage companion agent skills from one CLI or terminal dashboard. OpenSpec still owns the change lifecycle.
 
-This OpenSpec adaptation gives people using other skills one Bun CLI and terminal dashboard to choose schema workflows and companion skills intentionally, inspect changes, and manage resources. OpenSpec still owns the change lifecycle; this tool does not replace it.
+## Run without installing
 
-The `opsx-schema` package bundles the custom schemas and host resources and is the only supported app/installer for schema, agent-skill, and MCP management.
-
-## Package and installation
-
-The repository root is the canonical `opsx-schema@0.1.0` package. The previously published `@nebulesstech/openspec-schemas@1.8.0` is a legacy standalone schema package. Its separate install path is deprecated for the current workflow and is not used or required by `opsx-schema`.
-
-From a checkout:
+Use [Bun 1.4+](https://bun.sh/) and, for project commands, OpenSpec CLI 1.12.0 on your `PATH`. From a terminal in an OpenSpec project:
 
 ```sh
-bun install
-bun src/domain/cli.ts --help
-bun src/domain/cli.ts --json schemas bundled
-bun src/domain/cli.ts --json mcp list --schema intent-driven-design
+bunx opsx-schema
 ```
 
-To smoke-test the single distributable in an isolated consumer, pack the repository root once and install that tarball; no second schema tarball or dependency override is needed:
+This opens the interactive dashboard. Outside a project, browse the bundled schemas with `bunx opsx-schema schemas bundled`. In scripts or other non-interactive sessions, use an explicit command instead of the dashboard. You can pass `--project <root>` before a command to target a particular project.
+
+## Common commands
 
 ```sh
-TMP_DIR=$(mktemp -d)
-bun pm pack --destination "$TMP_DIR"
-mkdir "$TMP_DIR/consumer"
-printf '{"private":true}\n' > "$TMP_DIR/consumer/package.json"
-(cd "$TMP_DIR/consumer" && bun add "$TMP_DIR"/opsx-schema-*.tgz)
-"$TMP_DIR/consumer/node_modules/.bin/opsx-schema" --help
-"$TMP_DIR/consumer/node_modules/.bin/opsx-schema" --json schemas bundled
+# See what is in the package before choosing a workflow.
+bunx opsx-schema schemas bundled
+bunx opsx-schema schemas bundled intent-driven
+
+# Inspect an existing project and its changes.
+bunx opsx-schema status
+bunx opsx-schema changes
+bunx opsx-schema archive
+
+# Install a bundled schema, then select it as the project default.
+bunx opsx-schema --project . schemas install intent-driven
+bunx opsx-schema --project . schema switch intent-driven --profile codex --bundle default
+
+# Work through a change using the selected schema.
+bunx opsx-schema change create account-export --description "Let users export their data"
+bunx opsx-schema change status account-export
+bunx opsx-schema change instructions account-export proposal
+bunx opsx-schema change validate account-export
+bunx opsx-schema change archive account-export
 ```
 
-For a version published to npm, install the CLI with Bun:
+Commands that change files **preview only** on the first run. Review the preview, then repeat the same command with its fresh `--apply-token <token>` to apply. Installation and switching are separate steps; installing a schema does not select it. The archive example also needs its preview token before it changes anything.
 
-```sh
-bun add --global opsx-schema@<version>
-opsx-schema --help
-```
+See [workflows and schema choices](./docs/workflows.md) for all command families, what each schema is for, and a start-to-finish CLI path. The [command reference](./docs/commands.md) covers flags, output and approval rules. Contributors: [resource overview](./resources/README.md), [contribution guide](./resources/CONTRIBUTING.md), and [CI checks](./docs/ci.md).
 
-Requirements: Bun 1.4 or newer, and OpenSpec CLI 1.12.0 for project-aware commands. On an interactive terminal, `bun src/domain/cli.ts --project .` opens the dashboard. Bun runs the TypeScript entry point directly; there is no separate build step. A bare invocation without a usable TTY fails rather than emitting UI into a pipe. Use explicit commands for noninteractive work. See the [command guide](./docs/commands.md) for syntax, output contracts, and approval boundaries.
-
-Every mutation previews first. Schema installation/switching and agent-skill installation require their exact preview token before Apply. `skills inspect` is a local, read-only catalog query; `skills install` may fetch schema-declared external GitHub skill repositories while preparing its preview. MCP list/inspect and install preview read the bundled catalog and do not write provider configuration. MCP Apply has its own interactive approval gate; no schema operation installs a provider implicitly.
-
-## Resource authoring
-
-The npm tarball contains runtime schemas, host resources, linked resource guides, and licenses, not resource-local planning history. The curated public source retains project documents under root openspec/; legacy archives and specs from resources/openspec/ are excluded from this new repository.
-
-The canonical bundled sources are under `resources/`. Edit a schema at `resources/openspec/schemas/<name>/`: `schema.yaml` defines its artifact workflow, `templates/` contains artifact templates, and optional `skills.txt` and `mcp.yaml` declare companion resources. Shared command adapters remain schema-local under `resources/openspec/schemas/compound-intent-driven/adapters/`. Host-specific resources retain their host trees under `resources/.agents/`, `resources/.atomic/`, `resources/.claude/`, `resources/.omp/`, and the other `resources/.*` directories. `resources/LICENSE` covers the schema collection; `assets/schemas/manifest.json` and `assets/adapters/manifest.json` pin integrity metadata. Do not create a second package or edit duplicate schema/host payloads elsewhere.
-
-See the [resource overview](./resources/README.md) and [contribution guide](./resources/CONTRIBUTING.md) for the collection's workflows and provenance.
-
-## Verify
-
-```sh
-bun run typecheck
-bun run test:app
-bun run test:schemas
-bun test test/integration/distribution.test.ts
-bun run check
-```
-
-The distribution smoke test packs one root tarball, installs it into a temporary consumer, exercises the installed CLI, and applies a schema only inside a disposable OpenSpec project. It exercises MCP catalog/preview reads only; it never applies a provider configuration. Neither the dashboard nor the bundle requires a sibling checkout or an install of the legacy schema package.
-
-## Source and license
-
-This is the new repository for the earlier Nebuless OpenSpec schemas work. It combines the schema collection with the CLI, dashboard, and standalone OpenTUI skills. The public Git history starts with this curated migration; it does not import the earlier repository history or local benchmark and switch-journal data. The legacy `@nebulesstech/openspec-schemas` package remains separate.
-
-The schema collection is a Nebuless-maintained fork and extension of [Hari Krishnan's OpenSpec Custom Schemas](https://github.com/intent-driven-dev/openspec-schemas). [OpenSpec](https://github.com/Fission-AI/OpenSpec) supplies the underlying workflow engine. See [resources/LICENSE](./resources/LICENSE) for the collection license; the root application is MIT licensed.
+The schema collection extends [Hari Krishnan’s OpenSpec Custom Schemas](https://github.com/intent-driven-dev/openspec-schemas) ([resource license](./resources/LICENSE)); the CLI is MIT licensed.
