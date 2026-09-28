@@ -798,6 +798,7 @@ async function commandSchemas(
         "schemas install requires --project <root>; it never guesses an installation target.",
       );
     const root = await resolveProject(options.project, true);
+    await new OpenSpecClient(root).ensureSupported();
     const destination = one(parsed, "--as");
     const plan = await prepareBundledSchema(root, name, destination);
     const binding = { root, name, destination: destination ?? name, plan };

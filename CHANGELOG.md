@@ -14,6 +14,12 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 - Add a guarded manual npm release workflow with protected-main preflight,
   dry-run mode, and cryptographic registry provenance verification before tagging.
 
+### Fixed
+
+- Accept stable OpenSpec 1.x releases from 1.12.0 onward instead of requiring
+  exactly 1.12.0. Reject older or unsupported versions before schema writes,
+  with an upgrade link for older installations.
+
 ## [0.1.0] - 2026-09-26
 
 ### Added
