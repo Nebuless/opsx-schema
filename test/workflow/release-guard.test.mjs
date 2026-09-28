@@ -282,6 +282,13 @@ test("version, tag, package and dated substantive root notes must agree", () => 
   ).not.toThrow();
   expect(() =>
     assertReleaseMetadata(
+      environment,
+      manifest,
+      notes.replace("- Explain the actual change.", "- 修复发布检查。"),
+    ),
+  ).not.toThrow();
+  expect(() =>
+    assertReleaseMetadata(
       { ...environment, REQUESTED_TAG: "v1.2.4" },
       manifest,
       notes,
@@ -334,6 +341,12 @@ test("empty, heading-only, and placeholder release entries fail before the next 
     "- [x] <!-- TODO -->\n",
     "- <!--\nTODO: notes\n-->\n",
     "- ### Fixed\n",
+    "---\n",
+    "***\n",
+    "___\n",
+    "- - -\n",
+    "```js\n```\n",
+    "~~~text\n~~~\n",
   ]) {
     const changelog = `## [1.2.3] - 2026-09-28\n${body}\n## [1.2.2] - 2026-09-01\n- Existing notes`;
     expect(() =>

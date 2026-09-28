@@ -166,7 +166,12 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
       return false;
     }
     const note = listText.replace(/^\[[xX]\]\s*/, "").trim();
-    return Boolean(note && !/^#{1,6}\s/.test(note) && !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note));
+    return Boolean(
+      /[\p{L}\p{N}]/u.test(note) &&
+      !/^#{1,6}\s/.test(note) &&
+      !/^(?:`{3,}|~{3,})/.test(note) &&
+      !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note)
+    );
   });
   if (!hasNote) {
     throw new Error("CHANGELOG.md version entry needs substantive release notes");
