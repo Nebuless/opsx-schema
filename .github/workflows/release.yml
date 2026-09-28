@@ -1,0 +1,189 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Exact package version, without the v prefix
+        required: true
+        type: string
+      tag:
+        description: Exact tag, v<expected_version>
+        required: true
+        type: string
+      dry_run:
+        description: Run read-only preflight without publishing or tagging
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: npm-release-${{ inputs.expected_version }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out requested commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Install pinned tools and dependencies
+        run: |
+          npm install --global npm@11.5.1
+          test "$(node --version | cut -c 2- | cut -d. -f1)" = "24"
+          test "$(npm --version)" = "11.5.1"
+          bun install --frozen-lockfile
+          bun install --global @fission-ai/openspec@1.12.0
+          echo "$(bun pm bin -g)" >> "$GITHUB_PATH"
+      - name: Verify protected main and exact-SHA CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          BRANCH_JSON: ${{ runner.temp }}/branch.json
+          CHECK_RUNS_JSON: ${{ runner.temp }}/check-runs.json
+          CI_RUNS_JSON: ${{ runner.temp }}/ci-runs.json
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPOSITORY/branches/main" > "$BRANCH_JSON"
+          gh api --paginate --slurp "repos/$GH_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$CHECK_RUNS_JSON"
+          gh api --paginate --slurp "repos/$GH_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE_SHA&per_page=100" > "$CI_RUNS_JSON"
+          node .github/scripts/release-guard.mjs checks
+      - name: Verify version, tag, notes, and registry vacancy
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: node .github/scripts/release-guard.mjs metadata
+      - name: Verify packed runtime files
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          PACK_JSON: ${{ runner.temp }}/pack.json
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > "$PACK_JSON"
+          node .github/scripts/release-guard.mjs packed
+      - name: Verify installed distribution
+        run: |
+          test "$(openspec --version)" = "1.12.0"
+          bun run test:distribution
+      - name: Report dry-run result
+        if: inputs.dry_run
+        run: echo "Dry run passed. No npm publication, OIDC token, or tag was requested."
+
+  publish:
+    name: Publish and tag
+    if: inputs.dry_run == false
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: write
+      checks: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Check out verified commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Install pinned npm
+        run: |
+          npm install --global npm@11.5.1
+          test "$(npm --version)" = "11.5.1"
+      - name: Verify protected release environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          ENVIRONMENT_JSON: ${{ runner.temp }}/release-environment.json
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPOSITORY/environments/npm-release" > "$ENVIRONMENT_JSON"
+          node .github/scripts/release-guard.mjs environment
+      - name: Recheck version vacancy and publisher readiness
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+          TRUSTED_PUBLISHER_READY: ${{ vars.NPM_TRUSTED_PUBLISHER_READY }}
+        run: |
+          set -euo pipefail
+          test "$TRUSTED_PUBLISHER_READY" = "true"
+          node .github/scripts/release-guard.mjs metadata
+      - name: Recheck protected main and exact-SHA CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          BRANCH_JSON: ${{ runner.temp }}/branch.json
+          CHECK_RUNS_JSON: ${{ runner.temp }}/check-runs.json
+          CI_RUNS_JSON: ${{ runner.temp }}/ci-runs.json
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPOSITORY/branches/main" > "$BRANCH_JSON"
+          gh api --paginate --slurp "repos/$GH_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$CHECK_RUNS_JSON"
+          gh api --paginate --slurp "repos/$GH_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE_SHA&per_page=100" > "$CI_RUNS_JSON"
+          node .github/scripts/release-guard.mjs checks
+      - name: Publish once with provenance
+        id: publish
+        run: npm publish --provenance --access public
+      - name: Verify registered package and provenance
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          RELEASE_SHA: ${{ github.sha }}
+          VERSION_JSON: ${{ runner.temp }}/published-version.json
+          AUDIT_JSON: ${{ runner.temp }}/signatures.json
+          PROVENANCE_MARKER: ${{ runner.temp }}/verified-release-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          npm view "opsx-schema@$EXPECTED_VERSION" version --json > "$VERSION_JSON"
+          verify_directory="$(mktemp -d)"
+          trap 'rm -rf "$verify_directory"' EXIT
+          cd "$verify_directory"
+          npm init --yes >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund --save-exact "opsx-schema@$EXPECTED_VERSION"
+          npm audit signatures --json --include-attestations > "$AUDIT_JSON"
+          node "$GITHUB_WORKSPACE/.github/scripts/release-guard.mjs" verify
+      - name: Create and push verified tag
+        if: success()
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          RELEASE_SHA: ${{ github.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROVENANCE_MARKER: ${{ runner.temp }}/verified-release-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node .github/scripts/release-guard.mjs tag
+      - name: Report published version for manual investigation
+        if: failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure')
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          echo "::error::opsx-schema@$EXPECTED_VERSION may have been accepted by npm. Do not retry or tag automatically; inspect the registry and investigate the published version."
