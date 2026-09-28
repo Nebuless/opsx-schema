@@ -111,10 +111,15 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Set up Bun 1.4.2 for verification dependencies
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.4.2
       - name: Install pinned npm
         run: |
           npm install --global npm@11.5.1
           test "$(npm --version)" = "11.5.1"
+          bun install --frozen-lockfile
       - name: Verify protected release environment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -158,6 +163,7 @@ jobs:
           VERSION_JSON: ${{ runner.temp }}/published-version.json
           AUDIT_JSON: ${{ runner.temp }}/signatures.json
           ATTESTATIONS_JSON: ${{ runner.temp }}/attestations.json
+          KEYS_JSON: ${{ runner.temp }}/registry-keys.json
           PROVENANCE_MARKER: ${{ runner.temp }}/verified-release-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
@@ -169,6 +175,7 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund --save-exact "opsx-schema@$EXPECTED_VERSION"
           npm audit signatures --json > "$AUDIT_JSON"
           curl --fail --silent --show-error "https://registry.npmjs.org/-/npm/v1/attestations/opsx-schema@$EXPECTED_VERSION" > "$ATTESTATIONS_JSON"
+          curl --fail --silent --show-error "https://registry.npmjs.org/-/npm/v1/keys" > "$KEYS_JSON"
           node "$GITHUB_WORKSPACE/.github/scripts/release-guard.mjs" verify
       - name: Create and push verified tag
         if: success()

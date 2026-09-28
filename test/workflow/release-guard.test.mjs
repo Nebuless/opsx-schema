@@ -18,6 +18,7 @@ import {
   assertPackedFiles,
   assertProtectedReleaseEnvironment,
   assertPublishedVersion,
+  assertReleaseClaims,
   assertRegistryVersionUnused,
   assertReleaseMetadata,
   assertRequiredChecks,
@@ -476,22 +477,20 @@ function registryAttestations(version, sha) {
   };
 }
 
-test("registry version and verified provenance identify the exact release", () => {
+test("registry version and signed statement claims identify the exact release", () => {
   expect(() => assertPublishedVersion(["1.2.3"], "1.2.3")).not.toThrow();
   expect(() => assertPublishedVersion(["1.2.4"], "1.2.3")).toThrow(
     "did not match",
   );
   expect(() =>
-    assertVerifiedProvenance(
-      { invalid: [], missing: [] },
+    assertReleaseClaims(
       registryAttestations("1.2.3", releaseSha),
       "1.2.3",
       releaseSha,
     ),
   ).not.toThrow();
   expect(() =>
-    assertVerifiedProvenance(
-      { invalid: [], missing: [] },
+    assertReleaseClaims(
       registryAttestations("1.2.3", releaseSha),
       "1.2.3",
       "b".repeat(40),
@@ -500,27 +499,8 @@ test("registry version and verified provenance identify the exact release", () =
   const missingPublish = registryAttestations("1.2.3", releaseSha);
   missingPublish.attestations.pop();
   expect(() =>
-    assertVerifiedProvenance(
-      { invalid: [], missing: [] },
-      missingPublish,
-      "1.2.3",
-      releaseSha,
-    ),
+    assertReleaseClaims(missingPublish, "1.2.3", releaseSha),
   ).toThrow("lacks verified provenance or publish attestation");
-  for (const audit of [
-    { invalid: [{ name: "opsx-schema" }], missing: [] },
-    { invalid: [], missing: [{ name: "opsx-schema" }] },
-    {},
-  ]) {
-    expect(() =>
-      assertVerifiedProvenance(
-        audit,
-        registryAttestations("1.2.3", releaseSha),
-        "1.2.3",
-        releaseSha,
-      ),
-    ).toThrow("Signature audit did not verify");
-  }
   const wrongWorkflow = registryAttestations("1.2.3", releaseSha);
   const payload = wrongWorkflow.attestations[0].bundle.dsseEnvelope;
   const statement = JSON.parse(
@@ -529,14 +509,37 @@ test("registry version and verified provenance identify the exact release", () =
   statement.predicate.buildDefinition.externalParameters.workflow.path =
     ".github/workflows/other.yml";
   payload.payload = Buffer.from(JSON.stringify(statement)).toString("base64");
-  expect(() =>
+  expect(() => assertReleaseClaims(wrongWorkflow, "1.2.3", releaseSha)).toThrow(
+    "workflow and commit",
+  );
+});
+
+test("unsigned registry claims cannot pass with clean audit arrays", async () => {
+  const claims = registryAttestations("1.2.3", releaseSha);
+  for (const audit of [
+    { invalid: [{ name: "opsx-schema" }], missing: [] },
+    { invalid: [], missing: [{ name: "opsx-schema" }] },
+    {},
+  ]) {
+    await expect(
+      assertVerifiedProvenance(
+        audit,
+        claims,
+        { keys: [] },
+        "1.2.3",
+        releaseSha,
+      ),
+    ).rejects.toThrow("Signature audit did not verify");
+  }
+  await expect(
     assertVerifiedProvenance(
       { invalid: [], missing: [] },
-      wrongWorkflow,
+      claims,
+      { keys: [] },
       "1.2.3",
       releaseSha,
     ),
-  ).toThrow("workflow and commit");
+  ).rejects.toThrow();
 });
 
 test("dry run and missing provenance marker block tagging", async () => {
@@ -615,6 +618,7 @@ test("post-publication verification failure leaves no marker for tagging", () =>
     const versionFile = path.join(directory, "version.json");
     const auditFile = path.join(directory, "audit.json");
     const attestationsFile = path.join(directory, "attestations.json");
+    const keysFile = path.join(directory, "keys.json");
     const marker = path.join(directory, "verified");
     const helper = path.join(
       repositoryRoot,
@@ -625,6 +629,7 @@ test("post-publication verification failure leaves no marker for tagging", () =>
       VERSION_JSON: versionFile,
       AUDIT_JSON: auditFile,
       ATTESTATIONS_JSON: attestationsFile,
+      KEYS_JSON: keysFile,
       PROVENANCE_MARKER: marker,
       EXPECTED_VERSION: "1.2.3",
       RELEASE_SHA: releaseSha,
@@ -632,6 +637,7 @@ test("post-publication verification failure leaves no marker for tagging", () =>
     writeFileSync(versionFile, JSON.stringify(["1.2.3"]));
     writeFileSync(auditFile, JSON.stringify({ invalid: [], missing: [] }));
     writeFileSync(attestationsFile, JSON.stringify({ attestations: [] }));
+    writeFileSync(keysFile, JSON.stringify({ keys: [] }));
     const noAttestation = spawnSync("node", [helper, "verify"], {
       encoding: "utf8",
       env: environment,
@@ -655,12 +661,12 @@ test("post-publication verification failure leaves no marker for tagging", () =>
     expect(wrongVersion.stderr).toContain("did not match");
     expect(existsSync(marker)).toBe(false);
     writeFileSync(versionFile, JSON.stringify(["1.2.3"]));
-    const verified = spawnSync("node", [helper, "verify"], {
+    const unsigned = spawnSync("node", [helper, "verify"], {
       encoding: "utf8",
       env: environment,
     });
-    expect(verified.status).toBe(0);
-    expect(readFileSync(marker, "utf8")).toBe(`${releaseSha}\n`);
+    expect(unsigned.status).not.toBe(0);
+    expect(existsSync(marker)).toBe(false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
