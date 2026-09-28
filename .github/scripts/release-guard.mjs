@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { verify as verifySigstoreBundle } from "sigstore";
 
 export const REQUIRED_CHECKS = [
   "Commit history",
@@ -257,18 +258,7 @@ export function assertPublishedVersion(registryVersion, expectedVersion) {
   }
 }
 
-export function assertVerifiedProvenance(audit, registryAttestations, expectedVersion, releaseSha) {
-  if (!SHA_PATTERN.test(releaseSha)) {
-    throw new Error("Provenance verification needs an exact release SHA");
-  }
-  if (
-    !Array.isArray(audit?.invalid) ||
-    !Array.isArray(audit?.missing) ||
-    audit.invalid.length !== 0 ||
-    audit.missing.length !== 0
-  ) {
-    throw new Error("Signature audit did not verify all installed packages");
-  }
+function releaseAttestations(registryAttestations) {
   const bundles = registryAttestations?.attestations;
   if (!Array.isArray(bundles)) {
     throw new Error("Published package has no npm registry attestations");
@@ -278,6 +268,14 @@ export function assertVerifiedProvenance(audit, registryAttestations, expectedVe
   if (!provenance || !publication) {
     throw new Error("Published package lacks verified provenance or publish attestation");
   }
+  return [provenance, publication];
+}
+
+export function assertReleaseClaims(registryAttestations, expectedVersion, releaseSha) {
+  if (!SHA_PATTERN.test(releaseSha)) {
+    throw new Error("Provenance verification needs an exact release SHA");
+  }
+  const [provenance, publication] = releaseAttestations(registryAttestations);
 
   const statement = JSON.parse(
     Buffer.from(provenance.bundle.dsseEnvelope.payload, "base64").toString("utf8"),
@@ -310,6 +308,37 @@ export function assertVerifiedProvenance(audit, registryAttestations, expectedVe
   ) {
     throw new Error("Verified publish attestation does not identify this package version");
   }
+}
+
+export async function assertVerifiedProvenance(audit, registryAttestations, registryKeys, expectedVersion, releaseSha) {
+  if (
+    !Array.isArray(audit?.invalid) ||
+    !Array.isArray(audit?.missing) ||
+    audit.invalid.length !== 0 ||
+    audit.missing.length !== 0
+  ) {
+    throw new Error("Signature audit did not verify all installed packages");
+  }
+  const [provenance, publication] = releaseAttestations(registryAttestations);
+  const keys = registryKeys?.keys;
+  if (!Array.isArray(keys)) {
+    throw new Error("npm registry signing keys are missing");
+  }
+  const keySelector = (hint) => {
+    const matches = keys.filter((key) => key.keyid === hint);
+    if (matches.length !== 1 || typeof matches[0].key !== "string") {
+      throw new Error("npm registry signing key does not match the attestation");
+    }
+    const key = Buffer.from(matches[0].key, "base64");
+    if (key.length === 0) {
+      throw new Error("npm registry signing key is empty");
+    }
+    return key;
+  };
+  for (const entry of [provenance, publication]) {
+    await verifySigstoreBundle(entry.bundle, { keySelector });
+  }
+  assertReleaseClaims(registryAttestations, expectedVersion, releaseSha);
 }
 
 export async function createVerifiedMarker(markerPath, releaseSha) {
@@ -403,13 +432,14 @@ async function main() {
     return;
   }
   if (action === "verify") {
-    const [version, audit, attestations] = await Promise.all([
+    const [version, audit, attestations, keys] = await Promise.all([
       readFile(process.env.VERSION_JSON, "utf8").then(JSON.parse),
       readFile(process.env.AUDIT_JSON, "utf8").then(JSON.parse),
       readFile(process.env.ATTESTATIONS_JSON, "utf8").then(JSON.parse),
+      readFile(process.env.KEYS_JSON, "utf8").then(JSON.parse),
     ]);
     assertPublishedVersion(version, process.env.EXPECTED_VERSION);
-    assertVerifiedProvenance(audit, attestations, process.env.EXPECTED_VERSION, process.env.RELEASE_SHA);
+    await assertVerifiedProvenance(audit, attestations, keys, process.env.EXPECTED_VERSION, process.env.RELEASE_SHA);
     await createVerifiedMarker(process.env.PROVENANCE_MARKER, process.env.RELEASE_SHA);
     return;
   }
