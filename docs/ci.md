@@ -31,3 +31,6 @@ Required CI check names:
 Configure these protections in GitHub; files in this repository cannot enforce
 them. Keep rebase merge enabled so the individual conventional commits remain
 visible. A new push requires checks on the new head commit.
+
+For the separate, manually dispatched npm release and its dry-run and
+trusted-publisher setup, follow [the npm release guide](npm-release.md).
