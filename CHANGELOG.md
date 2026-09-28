@@ -12,7 +12,7 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 - Document `bunx opsx-schema` dashboard use, common CLI commands, all command
   families, and the nine bundled schema workflows in a linked user guide.
 - Add a guarded manual npm release workflow with protected-main preflight,
-  dry-run mode, and provenance verification before tagging.
+  dry-run mode, and audited registry provenance verification before tagging.
 
 ## [0.1.0] - 2026-09-26
 

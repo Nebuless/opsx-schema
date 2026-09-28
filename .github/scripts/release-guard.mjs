@@ -257,19 +257,21 @@ export function assertPublishedVersion(registryVersion, expectedVersion) {
   }
 }
 
-export function assertVerifiedProvenance(audit, expectedVersion, releaseSha) {
+export function assertVerifiedProvenance(audit, registryAttestations, expectedVersion, releaseSha) {
   if (!SHA_PATTERN.test(releaseSha)) {
     throw new Error("Provenance verification needs an exact release SHA");
   }
-  const verified = audit.verified?.find(
-    (entry) =>
-      entry.name === PACKAGE_NAME &&
-      entry.version === expectedVersion &&
-      entry.registry === "https://registry.npmjs.org/",
-  );
-  const bundles = verified?.attestationBundles;
+  if (
+    !Array.isArray(audit?.invalid) ||
+    !Array.isArray(audit?.missing) ||
+    audit.invalid.length !== 0 ||
+    audit.missing.length !== 0
+  ) {
+    throw new Error("Signature audit did not verify all installed packages");
+  }
+  const bundles = registryAttestations?.attestations;
   if (!Array.isArray(bundles)) {
-    throw new Error("Published package has no verified npm attestations");
+    throw new Error("Published package has no npm registry attestations");
   }
   const provenance = bundles.find((entry) => entry.predicateType === PROVENANCE_TYPE);
   const publication = bundles.find((entry) => entry.predicateType === PUBLISH_TYPE);
@@ -401,12 +403,13 @@ async function main() {
     return;
   }
   if (action === "verify") {
-    const [version, audit] = await Promise.all([
+    const [version, audit, attestations] = await Promise.all([
       readFile(process.env.VERSION_JSON, "utf8").then(JSON.parse),
       readFile(process.env.AUDIT_JSON, "utf8").then(JSON.parse),
+      readFile(process.env.ATTESTATIONS_JSON, "utf8").then(JSON.parse),
     ]);
     assertPublishedVersion(version, process.env.EXPECTED_VERSION);
-    assertVerifiedProvenance(audit, process.env.EXPECTED_VERSION, process.env.RELEASE_SHA);
+    assertVerifiedProvenance(audit, attestations, process.env.EXPECTED_VERSION, process.env.RELEASE_SHA);
     await createVerifiedMarker(process.env.PROVENANCE_MARKER, process.env.RELEASE_SHA);
     return;
   }
