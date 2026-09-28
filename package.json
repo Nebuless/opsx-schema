@@ -9,11 +9,23 @@
   },
   "type": "module",
   "files": [
-    "src", "assets", "opsx-schema.json", "docs/commands.md", "LICENSE",
-    "resources/LICENSE", "resources/README.md", "resources/CONTRIBUTING.md",
+    "src",
+    "assets",
+    "opsx-schema.json",
+    "docs/commands.md",
+    "LICENSE",
+    "resources/LICENSE",
+    "resources/README.md",
+    "resources/CONTRIBUTING.md",
     "resources/openspec/schemas",
-    "resources/.agents", "resources/.atomic", "resources/.claude", "resources/.codex",
-    "resources/.omp", "resources/.opencode", "resources/.pi", "resources/.senpi"
+    "resources/.agents",
+    "resources/.atomic",
+    "resources/.claude",
+    "resources/.codex",
+    "resources/.omp",
+    "resources/.opencode",
+    "resources/.pi",
+    "resources/.senpi"
   ],
   "engines": {
     "bun": ">=1.4.0"
@@ -23,10 +35,18 @@
   },
   "scripts": {
     "test": "bun run test:app && bun run test:schemas",
-    "test:app": "bun test test --timeout 30000",
+    "test:app": "bun run test:application && bun run test:distribution",
     "test:schemas": "sh resources/scripts/check-resources.sh",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun run test"
+    "check": "bun run format:check && bun run lint && bun run qlty:check && bun run typecheck && bun run test",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "qlty:check": "qlty --version | grep -q '^qlty 0.644.0 ' && qlty check --all --no-formatters && qlty smells --all --quiet --no-snippets",
+    "commitlint": "commitlint --config commitlint.config.js",
+    "commitlint:range": "commitlint --config commitlint.config.js",
+    "changelog": "conventional-changelog --preset conventionalcommits",
+    "test:application": "bun test test --timeout 30000 --path-ignore-patterns test/integration/distribution.test.ts",
+    "test:distribution": "bun test test/integration/distribution.test.ts --timeout 120000"
   },
   "dependencies": {
     "@opentui/core": "^0.5.12",
@@ -36,8 +56,13 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.3.8",
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
+    "conventional-changelog-cli": "5.0.0",
+    "conventional-changelog-conventionalcommits": "9.0.0",
     "typescript": "^7.0.2"
   }
 }
