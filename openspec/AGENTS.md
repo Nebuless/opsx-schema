@@ -16,11 +16,13 @@ OpenSpec workflow authority: repository configuration, schema definitions, activ
 
 ## Work Guidance
 
-Read status and instructions before changing artifacts. Respect each change's authorized mutation paths.
+Read `openspec status --change <change> --json` and `openspec instructions <artifact> --change <change> --json` before changing artifacts. Use returned `changeRoot`, `artifactPaths`, and `resolvedOutputPath`; do not guess paths or copy an old change's schema gates. Respect each change's authorized mutation paths.
+
+These are project-local schemas and records, not the packaged catalog in `resources/openspec/schemas/`. Read the root ownership map before changing schema copies or host projections.
 
 ## Verification
 
-Use named OpenSpec status and schema validation commands from root workflow rules.
+Run `openspec validate <change> --type change --strict` for the selected change. For a local schema change, also run `openspec schema validate <schema-name>`. These checks do not replace the implementation proof required by the change's tasks.
 
 ## Child DOX Index
 

@@ -1,7 +1,9 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
+import { decode } from "@toon-format/toon";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
 import { recordCreation } from "../../src/provenance/index.ts";
@@ -54,9 +56,13 @@ This capability demonstrates a sufficiently described behavior for validation fi
 The system SHALL expose a stable demo behavior.
 `;
 
+const cli = fileURLToPath(new URL("../../src/domain/cli.ts", import.meta.url));
+
 setDefaultTimeout(30_000);
 
-async function fixture(options: { oldSchemaExtraArtifact?: boolean } = {}) {
+async function fixture(
+  options: { oldSchemaExtraArtifact?: boolean; oldSchemaSkill?: boolean } = {},
+) {
   const root = await mkdtemp(
     path.join(os.tmpdir(), "opsx-validation-fixture-"),
   );
@@ -111,6 +117,11 @@ async function fixture(options: { oldSchemaExtraArtifact?: boolean } = {}) {
       "# Legacy note\n",
     );
   }
+  if (options.oldSchemaSkill)
+    await writeFile(
+      path.join(oldDirectory, "skills.txt"),
+      "example/agent-skills\tshared/new-skill\n",
+    );
   await writeFile(oldSchemaPath, YAML.stringify(oldSchema));
   await writeFile(newSchemaPath, YAML.stringify(newSchema));
   await writeFile(
@@ -130,7 +141,9 @@ async function fixture(options: { oldSchemaExtraArtifact?: boolean } = {}) {
     "schema: general-v1\n",
   );
   await writeFile(path.join(changeDirectory, "proposal.md"), proposal);
-  await mkdir(path.join(changeDirectory, "specs", "demo"), { recursive: true });
+  await mkdir(path.join(changeDirectory, "specs", "demo"), {
+    recursive: true,
+  });
   await writeFile(
     path.join(changeDirectory, "specs", "demo", "spec.md"),
     validSpec,
@@ -157,6 +170,186 @@ async function fixture(options: { oldSchemaExtraArtifact?: boolean } = {}) {
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }
+
+function invokeVerify(
+  root: string,
+  json: boolean,
+): { code: number; stdout: string; stderr: string } {
+  const result = Bun.spawnSync({
+    cmd: [
+      process.execPath,
+      cli,
+      "--project",
+      root,
+      "verify",
+      ...(json ? ["--json"] : []),
+    ],
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    code: result.exitCode,
+    stdout: new TextDecoder().decode(result.stdout),
+    stderr: new TextDecoder().decode(result.stderr),
+  };
+}
+
+test("aggregate verify identifies warning-only legacy provenance in text and JSON", async () => {
+  const project = await fixture();
+  try {
+    await rm(path.join(project.changeDirectory, ".opsx-provenance.json"));
+
+    for (const json of [false, true]) {
+      const result = invokeVerify(project.root, json);
+      const envelope = (
+        json ? JSON.parse(result.stdout) : decode(result.stdout)
+      ) as {
+        ok: boolean;
+        error?: { code: string; message: string };
+        data: {
+          ok: boolean;
+          checks: Array<{ name: string; ok: boolean }>;
+          separateChecks: string[];
+          failures: Array<{
+            name: string;
+            findings?: Array<{ code: string; severity: string }>;
+          }>;
+        };
+      };
+
+      expect(result.code).toBe(1);
+      expect(envelope.ok).toBe(false);
+      expect(envelope.data.ok).toBe(false);
+      expect(envelope.data.separateChecks).toContain(
+        "adapters inspect <host> --scope project",
+      );
+      expect(envelope.data.checks).toContainEqual(
+        expect.objectContaining({ name: "schema:design-v2", ok: true }),
+      );
+      expect(envelope.data.checks).toContainEqual(
+        expect.objectContaining({ name: "skills", ok: true }),
+      );
+      expect(envelope.data.failures).toContainEqual(
+        expect.objectContaining({
+          name: "change:external-edit",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              code: "PROVENANCE_UNKNOWN",
+              severity: "warning",
+            }),
+          ]),
+        }),
+      );
+      expect(envelope.error?.code).toBe("VERIFY_FAILED");
+      expect(envelope.error?.message).toContain("change:external-edit");
+      expect(envelope.error?.message).toContain("PROVENANCE_UNKNOWN");
+      expect(envelope.error?.message).toContain(
+        "cannot prove its historical creation revision",
+      );
+      expect(envelope.error?.message).toContain(
+        "adapters inspect <host> --scope project",
+      );
+    }
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("aggregate verify keeps missing and drifted pinned revisions blocking", async () => {
+  for (const state of ["missing", "drifted"] as const) {
+    const project = await fixture();
+    try {
+      if (state === "missing") {
+        await rm(
+          path.join(
+            project.root,
+            "openspec",
+            ".opsx",
+            "revisions",
+            project.oldRevision.name,
+            project.oldRevision.digest,
+          ),
+          { recursive: true, force: true },
+        );
+      } else {
+        await writeFile(
+          path.join(
+            project.root,
+            "openspec",
+            "schemas",
+            project.oldRevision.name,
+            "external-drift.txt",
+          ),
+          "External edit changes schema revision digest.\n",
+        );
+      }
+
+      const result = invokeVerify(project.root, true);
+      const envelope = JSON.parse(result.stdout) as {
+        ok: boolean;
+        data: {
+          failures: Array<{
+            name: string;
+            findings?: Array<{ code: string }>;
+          }>;
+        };
+      };
+      expect(result.code).toBe(1);
+      expect(envelope.ok).toBe(false);
+      expect(envelope.data.failures).toContainEqual(
+        expect.objectContaining({
+          name: "change:external-edit",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              code:
+                state === "missing"
+                  ? "SCHEMA_REVISION_MISSING"
+                  : "SCHEMA_REVISION_DRIFT",
+            }),
+          ]),
+        }),
+      );
+    } finally {
+      await project.cleanup();
+    }
+  }
+});
+
+test("aggregate verify identifies unproven legacy skill selection", async () => {
+  const project = await fixture({ oldSchemaSkill: true });
+  try {
+    await rm(path.join(project.changeDirectory, ".opsx-provenance.json"));
+
+    const result = invokeVerify(project.root, true);
+    const envelope = JSON.parse(result.stdout) as {
+      ok: boolean;
+      error?: { message: string };
+      data: {
+        failures: Array<{
+          name: string;
+          diagnostics?: Array<{ code: string; message: string }>;
+        }>;
+      };
+    };
+    expect(result.code).toBe(1);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.data.failures).toContainEqual(
+      expect.objectContaining({
+        name: "skills",
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: "RESOURCE_PIN_SCAN_FAILED",
+            message: expect.stringContaining("no verified skill selection"),
+          }),
+        ]),
+      }),
+    );
+    expect(envelope.error?.message).toContain("skills");
+  } finally {
+    await project.cleanup();
+  }
+});
 
 test("strict validation reports an externally edited invalid artifact without rewriting it", async () => {
   const project = await fixture();

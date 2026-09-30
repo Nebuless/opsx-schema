@@ -6,7 +6,7 @@ Seven host-neutral `/opsx-ce-*` command bodies under OpenSpec lifecycle control.
 
 ## Ownership
 
-This directory owns canonical adapter text. Host paths only project it.
+This directory owns the seven command bodies of the project-local Compound schema. It is not the packaged adapter source: `resources/openspec/schemas/compound-intent-driven/adapters/shared/` owns nine bundled bodies, including continue and bulk-continue. Select the intended tree before editing.
 
 ## Local Contracts
 
@@ -38,7 +38,7 @@ No child DOX files. Projection paths stay outside this subtree.
 
 ## Projection Parity
 
-For a complete release, project canonical bodies byte-identically to these host paths (OpenCode may add description frontmatter). A shared-only delegated edit must report pending projection parity rather than edit outside its authorized scope:
+For packaged adapter changes, keep bundled command bodies byte-identical to these projections relative to `resources/` (OpenCode adds description frontmatter). A shared-only delegated edit must report pending projection parity rather than edit outside its authorized scope:
 
 ```text
 .opencode/commands/
@@ -47,9 +47,11 @@ For a complete release, project canonical bodies byte-identically to these host 
 .atomic/prompts/
 ```
 
-Run:
+Run from the repository root:
 
 ```sh
-sh scripts/test-compound-adapters.sh
-sh scripts/test-install-compound-adapters.sh
+sh resources/scripts/test-compound-adapters.sh
+sh resources/scripts/test-install-compound-adapters.sh
 ```
+
+These checks verify packaged resources only. A local command-body edit still requires the selected OpenSpec change's own proof; a passing bundled check does not prove local projection parity.

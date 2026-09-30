@@ -22,6 +22,10 @@ import {
 } from "node:fs/promises";
 import YAML from "yaml";
 import { OpsxError } from "../domain/project.ts";
+import { acquireProjectMutationLock } from "../project-lock.ts";
+import { OpenSpecClient } from "../openspec/client.ts";
+import { schema as resolveSchema } from "../catalog/schemas.ts";
+import { assertNoIncompleteSwitchRecovery } from "../switch/recovery.ts";
 
 const DEFAULT_AGENT_MANIFEST = fileURLToPath(
   new URL("../../opsx-schema.json", import.meta.url),
@@ -132,6 +136,71 @@ export interface SkillBundleCatalog {
   };
 }
 
+function skillBundleCatalog(manifest: SchemaSkillManifest): SkillBundleCatalog {
+  return skillBundleCatalogFromResolved(
+    manifest,
+    resolveSkillBundles(manifest.text, manifest.bundleText),
+  );
+}
+
+function skillBundleCatalogFromResolved(
+  manifest: SchemaSkillManifest,
+  resolved: ReadonlyMap<SkillBundle, SkillDeclaration[]>,
+): SkillBundleCatalog {
+  const declarations: Partial<
+    Record<SkillBundle, readonly SkillDeclaration[]>
+  > = {};
+  for (const bundle of SKILL_BUNDLE_ORDER) {
+    const entries = resolved.get(bundle);
+    if (entries) declarations[bundle] = entries;
+  }
+  return freeze({
+    bundles: SKILL_BUNDLE_ORDER.filter((bundle) => resolved.has(bundle)),
+    declarations,
+    manifestDigests: {
+      skills: manifest.digest,
+      profiles: manifest.bundleDigest,
+    },
+  });
+}
+
+export function assertSkillBundleDeclared(
+  catalog: SkillBundleCatalog,
+  schemaName: string,
+  bundle: SkillBundle,
+): void {
+  if (catalog.bundles.includes(bundle)) return;
+  const declared = new Set(
+    Object.values(catalog.declarations)
+      .flatMap((declarations) => declarations ?? [])
+      .map(
+        (declaration) =>
+          `${skillTarget(declaration)}\0${declaration.repository}\0${declaration.path}`,
+      ),
+  );
+  const defaultDeclarations = catalog.declarations.default;
+  const defaultTargets = new Set(
+    (defaultDeclarations ?? []).map(
+      (declaration) =>
+        `${skillTarget(declaration)}\0${declaration.repository}\0${declaration.path}`,
+    ),
+  );
+  const defaultContainsAll =
+    Boolean(defaultDeclarations?.length) &&
+    [...declared].every((declaration) => defaultTargets.has(declaration));
+  const tiers = catalog.bundles.join(", ") || "none";
+  throw new ResourceError(
+    "SKILL_BUNDLE_UNDECLARED",
+    `Skill bundle '${bundle}' is not declared by schema '${schemaName}'. Declared tiers: ${tiers}.${defaultContainsAll ? " The default bundle contains every declared skill." : ""}`,
+    {
+      schema: schemaName,
+      requestedBundle: bundle,
+      declaredTiers: [...catalog.bundles],
+      defaultContainsAllDeclaredSkills: defaultContainsAll,
+    },
+  );
+}
+
 export interface ResourceDiagnostic {
   readonly severity: "error";
   readonly code: string;
@@ -194,11 +263,22 @@ export interface ResourceRuntimeOptions {
   readonly resolveActivePins?: (
     projectRoot: string,
   ) => Promise<readonly ActiveSkillPin[]>;
+  /** Trusted schema resolver override for isolated tests; production resolves via OpenSpec. */
+  readonly resolveInstalledSchema?: (
+    projectRoot: string,
+    schemaName: string,
+  ) => Promise<{
+    readonly name: string;
+    readonly path: string;
+    readonly shadows: readonly unknown[];
+  }>;
 }
 
 export interface SkillInstallRequest {
   readonly projectRoot: string;
   readonly schemaRoot: string;
+  /** Schema identity used in bundle-selection diagnostics. */
+  readonly schemaName?: string;
   /** Named agent ids from opsx-schema.json; these do not select source skill bundles. */
   readonly profiles: readonly string[];
   /** Native project skill hosts; omitted means no host install is staged. */
@@ -268,6 +348,7 @@ export interface SkillInstallHostDescriptor {
 export interface SkillInstallRequestSnapshot {
   readonly projectRoot: string;
   readonly schemaRoot: string;
+  readonly schemaName: string;
   readonly profiles: readonly string[];
   readonly skillHosts: readonly SkillInstallHostId[];
   readonly skillBundle: SkillBundle;
@@ -782,38 +863,18 @@ export async function loadSkillBundles(
     "RESOURCE_SCHEMA_UNAVAILABLE",
   );
   const manifest = await readSchemaManifest(root);
-  const resolved = resolveSkillBundles(manifest.text, manifest.bundleText);
-  const declarations: Partial<
-    Record<SkillBundle, readonly SkillDeclaration[]>
-  > = {};
-  for (const bundle of SKILL_BUNDLE_ORDER) {
-    const entries = resolved.get(bundle);
-    if (entries) declarations[bundle] = entries;
-  }
-  return freeze({
-    bundles: SKILL_BUNDLE_ORDER.filter((bundle) => resolved.has(bundle)),
-    declarations,
-    manifestDigests: {
-      skills: manifest.digest,
-      profiles: manifest.bundleDigest,
-    },
-  });
+  return skillBundleCatalog(manifest);
 }
 
 function declarationsForBundle(
   manifest: SchemaSkillManifest,
   bundle: SkillBundle,
-): SkillDeclaration[] {
-  const declarations = resolveSkillBundles(
-    manifest.text,
-    manifest.bundleText,
-  ).get(bundle);
-  if (!declarations)
-    fail(
-      "PROFILE_UNDECLARED",
-      "Skill bundle '" + bundle + "' is not declared for this schema.",
-    );
-  return declarations;
+  schemaName: string,
+): readonly SkillDeclaration[] {
+  const resolved = resolveSkillBundles(manifest.text, manifest.bundleText);
+  const catalog = skillBundleCatalogFromResolved(manifest, resolved);
+  assertSkillBundleDeclared(catalog, schemaName, bundle);
+  return resolved.get(bundle)!;
 }
 
 interface LocalPinScan {
@@ -1040,7 +1101,7 @@ export async function requiredSkillTargets(
         continue;
       }
       let manifest: SchemaSkillManifest;
-      let declarations: SkillDeclaration[];
+      let declarations: readonly SkillDeclaration[];
       try {
         const schemaRoot = await resolveDirectory(
           pin.schemaRoot,
@@ -1048,7 +1109,7 @@ export async function requiredSkillTargets(
         );
         manifest = await readSchemaManifest(schemaRoot);
         const bundle = pin.skillBundle ?? "default";
-        declarations = declarationsForBundle(manifest, bundle);
+        declarations = declarationsForBundle(manifest, bundle, pin.schema);
         inputs.push([
           pin.change ?? null,
           pin.schema,
@@ -1866,6 +1927,7 @@ async function normalizeInstallRequest(
   return freeze({
     projectRoot: root,
     schemaRoot,
+    schemaName: input.schemaName ?? path.basename(schemaRoot),
     profiles,
     skillHosts,
     skillBundle,
@@ -1948,7 +2010,11 @@ async function buildInstallState(
       );
     return profile;
   });
-  const declarations = declarationsForBundle(manifest, request.skillBundle);
+  const declarations = declarationsForBundle(
+    manifest,
+    request.skillBundle,
+    request.schemaName,
+  );
   const declarationDigests = new Map<string, string>();
   const declarationDirectories = new Map<string, string>();
   for (const declaration of declarations) {
@@ -2359,7 +2425,11 @@ async function prepareInstall(
 ): Promise<PreparedInstall> {
   const request = await normalizeInstallRequest(input, options);
   const manifest = await readSchemaManifest(request.schemaRoot);
-  const declarations = declarationsForBundle(manifest, request.skillBundle);
+  const declarations = declarationsForBundle(
+    manifest,
+    request.skillBundle,
+    request.schemaName,
+  );
   const bundle = await acquireSources(declarations, options);
   try {
     const state = await buildInstallState(request, bundle.roots);
@@ -2434,6 +2504,30 @@ async function acquireLock(root: string): Promise<() => Promise<void>> {
       if (!isMissing(error)) throw error;
     }
   };
+}
+
+/** Acquire resources.lock after the caller has acquired the project mutation lock. */
+export async function acquireResourceMutationLock(
+  root: string,
+): Promise<() => Promise<void>> {
+  return acquireLock(await projectRootPath(root));
+}
+
+async function withReplacementMutationLocks<T>(
+  root: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const releaseProject = await acquireProjectMutationLock(root);
+  try {
+    const releaseResources = await acquireResourceMutationLock(root);
+    try {
+      return await work();
+    } finally {
+      await releaseResources();
+    }
+  } finally {
+    await releaseProject();
+  }
 }
 
 async function writeOwnership(
@@ -3106,4 +3200,2746 @@ export async function applySkillDisable(
   } finally {
     if (release) await release();
   }
+}
+
+export interface SkillReplacementRequest {
+  readonly projectRoot: string;
+  readonly schema: string;
+  /** Trusted OpenSpec-resolved installed schema directory; never supplied by the CLI user. */
+  readonly schemaRoot: string;
+  readonly bundle: SkillBundle;
+  readonly target: string;
+  readonly backupId: string;
+}
+
+export interface SkillReplacementAlias {
+  readonly kind: "profile" | "host";
+  readonly id: string;
+  readonly target: string;
+}
+
+export interface SkillReplacementInventoryEntry {
+  readonly path: string;
+  readonly kind: "file" | "directory";
+  readonly oldDigest: string | null;
+  readonly newDigest: string | null;
+  readonly oldMode: number | null;
+  readonly newMode: number | null;
+}
+
+export interface SkillReplacementCollision {
+  readonly target: string;
+  readonly digest: string;
+}
+
+export interface SkillReplacementPlan {
+  readonly kind: "skill-replacement";
+  readonly version: 1;
+  readonly request: SkillReplacementRequest;
+  readonly source: SkillDeclaration;
+  readonly sourceDigest: string;
+  readonly sourceIdentity: string;
+  readonly oldDigest: string;
+  readonly targetIdentity: string;
+  readonly parentIdentity: string;
+  readonly aliases: readonly SkillReplacementAlias[];
+  readonly remainingUnmanagedCollisions: readonly SkillReplacementCollision[];
+  readonly backupPath: string;
+  readonly manifestDigests: {
+    readonly skills: string;
+    readonly skillBundles: string | null;
+    readonly profiles: string;
+  };
+  readonly pinGuard: RequiredSkillTargets;
+  readonly ownershipRaw: string | null;
+  readonly inventory: readonly SkillReplacementInventoryEntry[];
+  readonly diff: {
+    readonly text: string;
+    readonly binaryFiles: readonly string[];
+    readonly truncated: boolean;
+    readonly omittedBytes: number;
+  };
+  readonly canApply: true;
+  readonly inputDigest: string;
+  readonly token: string;
+  readonly freshness: { readonly status: "current"; readonly digest: string };
+}
+
+export interface SkillReplacementReceipt {
+  readonly schemaVersion: 1;
+  readonly backupId: string;
+  readonly phase:
+    | "intent"
+    | "backup-copying"
+    | "backup-ready"
+    | "stage-copying"
+    | "stage-ready"
+    | "target-moving-original"
+    | "target-original-moved"
+    | "target-installing"
+    | "target-installed"
+    | "ownership-updating"
+    | "ownership-updated"
+    | "complete"
+    | "partial";
+  readonly schema: string;
+  readonly bundle: SkillBundle;
+  readonly target: string;
+  readonly source: SkillDeclaration;
+  readonly sourceDigest: string;
+  readonly sourceIdentity: string;
+  readonly manifestDigests: {
+    readonly skills: string;
+    readonly skillBundles: string | null;
+    readonly profiles: string;
+  };
+  readonly beforeDigest: string;
+  readonly beforeIdentity: string;
+  readonly parentIdentity: string;
+  readonly backupPath: string;
+  readonly backupDigest: string | null;
+  readonly installedIdentity: string | null;
+  readonly stagePath: string;
+  readonly rollbackPath: string;
+  readonly beforeOwnershipRaw: string | null;
+  readonly afterOwnershipRaw: string;
+  readonly aliases: readonly SkillReplacementAlias[];
+  readonly error?: string;
+  readonly restore?: {
+    readonly phase:
+      | "intent"
+      | "stage-ready"
+      | "target-moving"
+      | "target-moved"
+      | "target-restoring"
+      | "target-restored"
+      | "ownership-restoring"
+      | "ownership-restored"
+      | "complete"
+      | "partial";
+    readonly stagePath: string;
+    readonly rollbackPath: string;
+    readonly error?: string;
+  };
+}
+
+export interface SkillReplacementInspection {
+  readonly backupId: string;
+  readonly receiptPath: string;
+  readonly phase: SkillReplacementReceipt["phase"];
+  readonly receipt: SkillReplacementReceipt;
+  readonly observed: {
+    readonly targetKind:
+      | "missing"
+      | "symlink"
+      | "parent-conflict"
+      | "directory"
+      | "file"
+      | "other";
+    readonly targetDigest: string | null;
+    readonly ownershipMatchesBefore: boolean;
+    readonly ownershipMatchesAfter: boolean;
+    readonly backupKind: PathState["kind"];
+    readonly backupDigest: string | null;
+    readonly stageKind: PathState["kind"];
+    readonly rollbackKind: PathState["kind"];
+    readonly restoreStageKind: PathState["kind"] | null;
+    readonly restoreRollbackKind: PathState["kind"] | null;
+    readonly restoreRollbackDigest: string | null;
+  };
+}
+
+export interface SkillRestorePlan {
+  readonly kind: "skill-restore";
+  readonly version: 1;
+  readonly projectRoot: string;
+  readonly backupId: string;
+  readonly target: string;
+  readonly skill: string;
+  readonly receiptDigest: string;
+  readonly currentTargetDigest: string | null;
+  readonly currentTargetIdentity: string | null;
+  readonly targetParentIdentity: string;
+  readonly ownershipRaw: string | null;
+  readonly pinGuard: RequiredSkillTargets;
+  readonly aliases: readonly SkillReplacementAlias[];
+  readonly backupDigest: string;
+  readonly alreadyRestored: boolean;
+  readonly recoveringReplacementOriginal: boolean;
+  readonly recoveryRollbackDigest: string | null;
+  readonly recoveryRollbackIdentity: string | null;
+  readonly canApply: boolean;
+  readonly refusal?: string;
+  readonly inputDigest: string;
+  readonly token: string;
+  readonly freshness: { readonly status: "current"; readonly digest: string };
+}
+
+interface ReplacementTreeEntry {
+  readonly path: string;
+  readonly kind: "file" | "directory";
+  readonly mode: number;
+  readonly digest: string | null;
+  readonly bytes: Uint8Array | null;
+}
+
+interface ReplacementTree {
+  readonly digest: string;
+  readonly identity: string;
+  readonly entries: readonly ReplacementTreeEntry[];
+}
+
+const REPLACEMENT_BASE = ".openspec/opsx-schema/replacements";
+const REPLACEMENT_DIFF_LIMIT = 32 * 1024;
+const SAFE_BACKUP_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+function compareReplacementPaths(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+const RECEIPT_PHASES: Record<SkillReplacementReceipt["phase"], true> = {
+  intent: true,
+  "backup-copying": true,
+  "backup-ready": true,
+  "stage-copying": true,
+  "stage-ready": true,
+  "target-moving-original": true,
+  "target-original-moved": true,
+  "target-installing": true,
+  "target-installed": true,
+  "ownership-updating": true,
+  "ownership-updated": true,
+  complete: true,
+  partial: true,
+};
+
+function replacementPaths(root: string, id: string) {
+  const base = path.posix.join(REPLACEMENT_BASE, id);
+  return {
+    directory: path.join(root, ...base.split("/")),
+    backup: path.join(root, ...base.split("/"), "backup"),
+    receipt: path.join(root, ...base.split("/"), "receipt.json"),
+    backupRelative: path.posix.join(base, "backup"),
+    receiptRelative: path.posix.join(base, "receipt.json"),
+  };
+}
+
+async function refuseOverlappingReplacementRecovery(
+  root: string,
+  target: string,
+  excludingBackupId?: string,
+): Promise<void> {
+  const baseState = await stateAt(root, REPLACEMENT_BASE);
+  if (baseState.kind === "missing") return;
+  if (baseState.kind !== "directory")
+    fail(
+      "RESOURCE_RECOVERY_UNSAFE",
+      `Replacement recovery directory is unsafe: ${baseState.absolute}`,
+    );
+  for (const name of await readdir(baseState.absolute)) {
+    if (name === excludingBackupId) continue;
+    if (!SAFE_BACKUP_ID.test(name))
+      fail(
+        "RESOURCE_RECOVERY_UNSAFE",
+        `Unrecognized replacement recovery entry: ${name}`,
+      );
+    const state = await stateAt(root, path.posix.join(REPLACEMENT_BASE, name));
+    if (state.kind !== "directory")
+      fail(
+        "RESOURCE_RECOVERY_UNSAFE",
+        `Replacement recovery record is unsafe: ${state.absolute}`,
+      );
+    const receiptState = await stateAt(
+      root,
+      path.posix.join(REPLACEMENT_BASE, name, "receipt.json"),
+    );
+    // A transaction cannot mutate targets before persisting its first receipt.
+    // Ignore receiptless entries, but never remove or adopt their contents.
+    if (receiptState.kind === "missing") continue;
+    const { receipt } = await readReplacementReceipt(root, name);
+    const [targetState, rollbackState] = await Promise.all([
+      stateAt(root, receipt.target),
+      stateAt(root, receipt.rollbackPath),
+    ]);
+    const restoreRollbackState = receipt.restore
+      ? await stateAt(root, receipt.restore.rollbackPath)
+      : null;
+    const targetDigest =
+      targetState.kind === "directory"
+        ? await digestTree(targetState.absolute)
+        : null;
+    const ownership = await readOwnership(root);
+    const recoveredBeforeState =
+      targetDigest === receipt.beforeDigest &&
+      rollbackState.kind === "missing" &&
+      ownership.raw === receipt.beforeOwnershipRaw;
+    const recoveredRestoreState =
+      receipt.restore?.phase === "partial" &&
+      receipt.restore.error !== undefined &&
+      targetDigest === receipt.beforeDigest &&
+      restoreRollbackState?.kind === "missing" &&
+      ownership.raw === receipt.beforeOwnershipRaw;
+    const installedState =
+      targetDigest === receipt.sourceDigest &&
+      ownership.raw === receipt.afterOwnershipRaw;
+    const receiptCompleted =
+      receipt.phase === "complete" &&
+      installedState &&
+      (!receipt.restore || receipt.restore.phase === "complete");
+    if (
+      receipt.target === target &&
+      !recoveredBeforeState &&
+      !recoveredRestoreState &&
+      !receiptCompleted
+    )
+      fail(
+        "RESOURCE_RECOVERY_INCOMPLETE",
+        `Replacement '${name}' has unfinished recovery for ${target}; inspect it before another replacement.`,
+        { backupId: name, receiptPath: receiptState.absolute },
+      );
+  }
+}
+
+async function cleanupEmptyReceiptlessReservation(
+  root: string,
+  id: string,
+): Promise<void> {
+  const relative = path.posix.join(REPLACEMENT_BASE, id);
+  const reservation = await stateAt(root, relative);
+  if (reservation.kind !== "directory") return;
+  if (
+    (await stateAt(root, path.posix.join(relative, "receipt.json"))).kind !==
+    "missing"
+  )
+    return;
+  const original = await lstat(reservation.absolute);
+  if ((await readdir(reservation.absolute)).length !== 0) return;
+  const latest = await stateAt(root, relative);
+  if (
+    latest.kind !== "directory" ||
+    !sameIdentity(original, await lstat(latest.absolute)) ||
+    (await readdir(latest.absolute)).length !== 0
+  )
+    return;
+  try {
+    await rmdir(latest.absolute);
+    await syncDirectory(path.dirname(latest.absolute));
+  } catch (error) {
+    if (
+      !["ENOTEMPTY", "EEXIST"].includes(
+        (error as NodeJS.ErrnoException).code ?? "",
+      )
+    )
+      throw error;
+  }
+}
+
+type ReplacementStat = Awaited<ReturnType<typeof lstat>>;
+
+function statIdentity(info: ReplacementStat): string {
+  return [
+    info.dev,
+    info.ino,
+    Number(info.mode) & 0o777,
+    info.size,
+    info.mtimeMs,
+    info.ctimeMs,
+  ].join(":");
+}
+
+function directoryIdentity(info: ReplacementStat): string {
+  return [info.dev, info.ino, Number(info.mode) & 0o777].join(":");
+}
+
+function sameIdentity(left: ReplacementStat, right: ReplacementStat): boolean {
+  return statIdentity(left) === statIdentity(right);
+}
+
+function assertReplacementRequest(input: SkillReplacementRequest): void {
+  if (
+    !input ||
+    typeof input !== "object" ||
+    typeof input.target !== "string" ||
+    path.isAbsolute(input.target) ||
+    path.win32.isAbsolute(input.target) ||
+    typeof input.schema !== "string" ||
+    !safeName(input.schema) ||
+    !SAFE_BACKUP_ID.test(input.backupId) ||
+    (input.bundle !== "default" &&
+      input.bundle !== "recommended" &&
+      input.bundle !== "all")
+  )
+    fail(
+      "RESOURCE_REPLACEMENT_REQUEST_INVALID",
+      "Invalid replacement request.",
+    );
+}
+
+async function replacementTree(directory: string): Promise<ReplacementTree> {
+  const hash = createHash("sha256");
+  const identity = createHash("sha256");
+  const entries: ReplacementTreeEntry[] = [];
+  const rootInfo = await lstat(directory);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
+    fail(
+      "RESOURCE_TARGET_UNSAFE",
+      `Expected a real skill directory: ${directory}`,
+    );
+  hash.update(`root\0${Number(rootInfo.mode) & 0o777}\0`);
+  identity.update(`root\0${statIdentity(rootInfo)}\0`);
+  entries.push({
+    path: ".",
+    kind: "directory",
+    mode: Number(rootInfo.mode) & 0o777,
+    digest: null,
+    bytes: null,
+  });
+  const walk = async (current: string, relative: string): Promise<void> => {
+    const names = (await readdir(current)).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    for (const name of names) {
+      const child = path.join(current, name);
+      const childRelative = relative ? `${relative}/${name}` : name;
+      const info = await lstat(child);
+      identity.update(`${childRelative}\0${statIdentity(info)}\0`);
+      if (info.isSymbolicLink())
+        fail(
+          "RESOURCE_SYMLINK",
+          `Skill directory contains a symlink: ${childRelative}`,
+        );
+      if (info.isDirectory()) {
+        const mode = Number(info.mode) & 0o777;
+        hash.update(`dir\0${childRelative}\0${mode}\0`);
+        entries.push({
+          path: childRelative,
+          kind: "directory",
+          mode,
+          digest: null,
+          bytes: null,
+        });
+        await walk(child, childRelative);
+        if (!sameIdentity(info, await lstat(child)))
+          fail(
+            "RESOURCE_STALE",
+            `Skill entry changed while reading: ${childRelative}`,
+          );
+      } else if (info.isFile()) {
+        const bytes = await readFile(child);
+        if (!sameIdentity(info, await lstat(child)))
+          fail(
+            "RESOURCE_STALE",
+            `Skill entry changed while reading: ${childRelative}`,
+          );
+        const mode = Number(info.mode) & 0o777;
+        const digest = sha256(bytes);
+        hash.update(`file\0${childRelative}\0${mode}\0${bytes.byteLength}\0`);
+        hash.update(bytes);
+        entries.push({
+          path: childRelative,
+          kind: "file",
+          mode,
+          digest,
+          bytes,
+        });
+      } else {
+        fail(
+          "RESOURCE_UNSUPPORTED_ENTRY",
+          `Skill directory contains a non-file resource: ${childRelative}`,
+        );
+      }
+    }
+  };
+  await walk(directory, "");
+  const after = await lstat(directory);
+  if (!sameIdentity(rootInfo, after))
+    fail(
+      "RESOURCE_STALE",
+      `Skill directory identity changed while reading: ${directory}`,
+    );
+  identity.update(`root-after\0${statIdentity(after)}\0`);
+  return {
+    digest: hash.digest("hex"),
+    identity: identity.digest("hex"),
+    entries,
+  };
+}
+
+async function replacementAliases(
+  root: string,
+  target: string,
+  skill: string,
+  profileFile: { profiles: AgentProfile[]; digest: string },
+): Promise<SkillReplacementAlias[]> {
+  const parentRelative = path.posix.dirname(target);
+  const parent = await stateAt(root, parentRelative);
+  if (parent.kind !== "directory")
+    fail(
+      "RESOURCE_TARGET_UNSAFE",
+      `Skill target parent is not a real directory: ${parentRelative}`,
+    );
+  const aliases: SkillReplacementAlias[] = [];
+  for (const profile of profileFile.profiles) {
+    const relativeTarget = path.posix.join(profile.target, skill);
+    const candidate = await stateAt(root, profile.target);
+    if (candidate.kind === "symlink")
+      fail(
+        "RESOURCE_TARGET_ALIAS_AMBIGUOUS",
+        `Cannot prove whether symlinked profile root aliases ${target}: ${profile.target}`,
+      );
+    if (
+      relativeTarget === target ||
+      (candidate.kind === "directory" &&
+        (await sameDirectory(parent, candidate)))
+    )
+      aliases.push({ kind: "profile", id: profile.id, target: relativeTarget });
+  }
+  for (const [host, contract] of Object.entries(SKILL_HOST_CONTRACTS)) {
+    const relativeTarget = path.posix.join(contract.relativeDestination, skill);
+    const candidate = await stateAt(root, contract.relativeDestination);
+    if (candidate.kind === "symlink")
+      fail(
+        "RESOURCE_TARGET_ALIAS_AMBIGUOUS",
+        `Cannot prove whether symlinked ${host} skill root aliases ${target}: ${contract.relativeDestination}`,
+      );
+    if (
+      relativeTarget === target ||
+      (candidate.kind === "directory" &&
+        (await sameDirectory(parent, candidate)))
+    )
+      aliases.push({
+        kind: "host",
+        id: host,
+        target: relativeTarget,
+      });
+  }
+  const unique = new Map(
+    aliases.map((alias) => [
+      `${alias.kind}\0${alias.id}\0${alias.target}`,
+      alias,
+    ]),
+  );
+  const result = [...unique.values()].sort((left, right) =>
+    `${left.kind}\0${left.id}\0${left.target}`.localeCompare(
+      `${right.kind}\0${right.id}\0${right.target}`,
+    ),
+  );
+  if (!result.length)
+    fail(
+      "RESOURCE_TARGET_NOT_DECLARED",
+      `Target is not declared by an agent profile or supported skill host: ${target}`,
+    );
+  return result;
+}
+
+async function assertNoSwitchRecoveryForAliases(
+  root: string,
+  aliases: readonly SkillReplacementAlias[],
+): Promise<void> {
+  await assertNoIncompleteSwitchRecovery(
+    root,
+    aliases.map((alias) => path.join(root, ...alias.target.split("/"))),
+  );
+}
+
+async function trustedReplacementSource(
+  root: string,
+  receipt: SkillReplacementReceipt,
+  options: ResourceRuntimeOptions,
+): Promise<SkillDeclaration> {
+  const installed = await (options.resolveInstalledSchema
+    ? options.resolveInstalledSchema(root, receipt.schema)
+    : resolveSchema(new OpenSpecClient(root), receipt.schema));
+  if (installed.name !== receipt.schema || installed.shadows.length !== 0)
+    fail("RESOURCE_RECEIPT_CORRUPT", "Replacement source schema is ambiguous.");
+  const schemaRoot = await resolveDirectory(
+    installed.path,
+    "RESOURCE_SCHEMA_UNAVAILABLE",
+  );
+  const manifest = await readSchemaManifest(schemaRoot);
+  const profiles = await readProfiles(
+    profileManifestPathFn(options.profileManifestPath),
+  );
+  if (
+    manifest.digest !== receipt.manifestDigests.skills ||
+    manifest.bundleDigest !== receipt.manifestDigests.skillBundles ||
+    profiles.digest !== receipt.manifestDigests.profiles
+  )
+    fail("RESOURCE_RECEIPT_CORRUPT", "Replacement source manifest changed.");
+  const declarations = declarationsForBundle(
+    manifest,
+    receipt.bundle,
+    receipt.schema,
+  ).filter((item) => item.skill === receipt.source.skill);
+  const keys = new Set(
+    declarations.map((item) => `${item.repository}\0${item.path}`),
+  );
+  const source = declarations[0];
+  if (
+    !source ||
+    keys.size !== 1 ||
+    source.repository !== receipt.source.repository ||
+    source.path !== receipt.source.path ||
+    inputDigest({
+      source,
+      sourceDigest: receipt.sourceDigest,
+      skillManifest: manifest.digest,
+      bundleManifest: manifest.bundleDigest,
+    }) !== receipt.sourceIdentity
+  )
+    fail(
+      "RESOURCE_RECEIPT_CORRUPT",
+      "Replacement receipt source does not match its installed schema.",
+    );
+  return source;
+}
+
+async function assertRestoreAliasesCurrent(
+  plan: SkillRestorePlan,
+  options: ResourceRuntimeOptions,
+): Promise<void> {
+  const profiles = await readProfiles(
+    profileManifestPathFn(options.profileManifestPath),
+  );
+  const receipt = (
+    await readReplacementReceipt(plan.projectRoot, plan.backupId)
+  ).receipt;
+  if (receipt.target !== plan.target || receipt.source.skill !== plan.skill)
+    fail(
+      "RESOURCE_STALE",
+      "Restore receipt target or source changed after preview.",
+    );
+  const source = await trustedReplacementSource(
+    plan.projectRoot,
+    receipt,
+    options,
+  );
+  const aliases = await replacementAliases(
+    plan.projectRoot,
+    receipt.target,
+    source.skill,
+    profiles,
+  );
+  if (JSON.stringify(aliases) !== JSON.stringify(plan.aliases))
+    fail("RESOURCE_STALE", "Restore profile aliases changed after preview.");
+  const pins = await requiredSkillTargets(plan.projectRoot, options);
+  if (
+    !pins.complete ||
+    pins.digest !== plan.pinGuard.digest ||
+    pins.targets.some((target) =>
+      aliases.some((alias) => alias.target === target),
+    )
+  )
+    fail("RESOURCE_STALE", "Restore active pin state changed after preview.");
+  await assertNoSwitchRecoveryForAliases(plan.projectRoot, aliases);
+}
+
+async function remainingReplacementCollisions(
+  root: string,
+  replacedTarget: string,
+  aliases: readonly SkillReplacementAlias[],
+  declarations: readonly SkillDeclaration[],
+  profiles: readonly AgentProfile[],
+  ownership: OwnershipSnapshot,
+): Promise<SkillReplacementCollision[]> {
+  const targetState = await stateAt(root, replacedTarget);
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const roots = new Set<string>();
+  for (const alias of aliases) {
+    if (alias.kind === "profile") {
+      const profile = profileById.get(alias.id);
+      if (profile) roots.add(profile.target);
+    } else {
+      const host = SKILL_HOST_CONTRACTS[alias.id as SkillInstallHostId];
+      if (host) roots.add(host.relativeDestination);
+    }
+  }
+  const collisions = new Map<string, string>();
+  for (const targetRoot of roots) {
+    for (const declaration of declarations) {
+      const target = path.posix.join(targetRoot, declaration.skill);
+      if (target === replacedTarget || ownership.data.resources[target])
+        continue;
+      const state = await stateAt(root, target);
+      if (state.kind !== "directory") continue;
+      if (
+        targetState.kind === "directory" &&
+        (await sameDirectory(targetState, state))
+      )
+        continue;
+      collisions.set(target, await digestTree(state.absolute));
+    }
+  }
+  return [...collisions.entries()]
+    .sort(([left], [right]) => compareReplacementPaths(left, right))
+    .map(([target, digest]) => ({ target, digest }));
+}
+
+function replacementDiff(
+  oldTree: ReplacementTree,
+  newTree: ReplacementTree,
+): {
+  inventory: SkillReplacementInventoryEntry[];
+  diff: SkillReplacementPlan["diff"];
+} {
+  const oldEntries = new Map(
+    oldTree.entries.map((entry) => [entry.path, entry]),
+  );
+  const newEntries = new Map(
+    newTree.entries.map((entry) => [entry.path, entry]),
+  );
+  const paths = [...new Set([...oldEntries.keys(), ...newEntries.keys()])].sort(
+    compareReplacementPaths,
+  );
+  const inventory: SkillReplacementInventoryEntry[] = [];
+  const textParts: string[] = [];
+  const binaryFiles: string[] = [];
+  let displayedBytes = 0;
+  let omittedBytes = 0;
+  for (const filePath of paths) {
+    const old = oldEntries.get(filePath);
+    const next = newEntries.get(filePath);
+    if (
+      old &&
+      next &&
+      old.kind === next.kind &&
+      old.mode === next.mode &&
+      old.digest === next.digest
+    )
+      continue;
+    inventory.push({
+      path: filePath,
+      kind: next?.kind ?? old!.kind,
+      oldDigest: old?.digest ?? null,
+      newDigest: next?.digest ?? null,
+      oldMode: old?.mode ?? null,
+      newMode: next?.mode ?? null,
+    });
+    if ((old && old.kind !== "file") || (next && next.kind !== "file"))
+      continue;
+    const oldBytes = old?.bytes ?? new Uint8Array();
+    const newBytes = next?.bytes ?? new Uint8Array();
+    const decode = (bytes: Uint8Array): string | null => {
+      if (bytes.includes(0)) return null;
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        return null;
+      }
+    };
+    const oldText = decode(oldBytes);
+    const newText = decode(newBytes);
+    if (oldText === null || newText === null) {
+      binaryFiles.push(filePath);
+      continue;
+    }
+    for (const line of [
+      `--- a/${filePath}\n`,
+      `+++ b/${filePath}\n`,
+      ...oldText.split(/\r?\n/).map((line) => `-${line}\n`),
+      ...newText.split(/\r?\n/).map((line) => `+${line}\n`),
+    ]) {
+      const size = Buffer.byteLength(line);
+      if (displayedBytes + size <= REPLACEMENT_DIFF_LIMIT) {
+        textParts.push(line);
+        displayedBytes += size;
+      } else {
+        omittedBytes += size;
+      }
+    }
+  }
+  const truncated = omittedBytes > 0;
+  const text =
+    textParts.join("") +
+    (truncated
+      ? `\n[diff truncated; ${omittedBytes} bytes omitted across changed text files]\n`
+      : "");
+  return {
+    inventory,
+    diff: { text, binaryFiles, truncated, omittedBytes },
+  };
+}
+
+async function buildSkillReplacementPlan(
+  input: SkillReplacementRequest,
+  options: ResourceRuntimeOptions,
+  checkBackup: boolean,
+): Promise<SkillReplacementPlan> {
+  assertReplacementRequest(input);
+  const root = await projectRootPath(input.projectRoot);
+  const installedSchema = await (options.resolveInstalledSchema
+    ? options.resolveInstalledSchema(root, input.schema)
+    : resolveSchema(new OpenSpecClient(root), input.schema));
+  const installedSchemaRoot = await resolveDirectory(
+    installedSchema.path,
+    "RESOURCE_SCHEMA_UNAVAILABLE",
+  );
+  const requestedSchemaRoot = await resolveDirectory(
+    input.schemaRoot,
+    "RESOURCE_SCHEMA_UNAVAILABLE",
+  );
+  if (
+    installedSchema.name !== input.schema ||
+    installedSchema.shadows.length !== 0 ||
+    installedSchemaRoot !== requestedSchemaRoot
+  )
+    fail(
+      "RESOURCE_SCHEMA_UNAVAILABLE",
+      `Schema '${input.schema}' does not resolve uniquely to the supplied installed schema directory.`,
+    );
+  const request: SkillReplacementRequest = {
+    ...input,
+    projectRoot: root,
+    target: normalizeTarget(root, input.target),
+    schemaRoot: installedSchemaRoot,
+  };
+  await refuseOverlappingReplacementRecovery(root, request.target);
+  const [profileFile, manifest, ownership, pinGuard] = await Promise.all([
+    readProfiles(profileManifestPathFn(options.profileManifestPath)),
+    readSchemaManifest(request.schemaRoot),
+    readOwnership(root),
+    requiredSkillTargets(root, options),
+  ]);
+  if (!pinGuard.complete)
+    fail(
+      "SKILL_REQUIREMENTS_INCOMPLETE",
+      "Active skill targets cannot be completely verified; replacement is blocked.",
+      pinGuard.diagnostics,
+    );
+  const targetState = await stateAt(root, request.target);
+  if (targetState.kind !== "directory")
+    fail(
+      "RESOURCE_REPLACEMENT_TARGET_INVALID",
+      `Replacement requires one existing real unmanaged skill directory; target state is ${targetState.kind}.`,
+    );
+  const requestedSkill = request.target.split("/").at(-1)!;
+  const declaredTarget =
+    profileFile.profiles.some(
+      (profile) =>
+        path.posix.join(profile.target, requestedSkill) === request.target,
+    ) ||
+    Object.values(SKILL_HOST_CONTRACTS).some(
+      (contract) =>
+        path.posix.join(contract.relativeDestination, requestedSkill) ===
+        request.target,
+    );
+  if (!declaredTarget)
+    fail(
+      "RESOURCE_TARGET_NOT_DECLARED",
+      `Target is not an exact declared skill directory: ${request.target}`,
+    );
+  if (
+    profileFile.profiles.some((profile) => profile.target === request.target) ||
+    Object.values(SKILL_HOST_CONTRACTS).some(
+      (contract) => contract.relativeDestination === request.target,
+    )
+  )
+    fail(
+      "RESOURCE_TARGET_UNSAFE",
+      "Replacement target must be one declared skill directory, not a skill root.",
+    );
+  const preflightAliases = await replacementAliases(
+    root,
+    request.target,
+    requestedSkill,
+    profileFile,
+  );
+  await assertNoSwitchRecoveryForAliases(root, preflightAliases);
+  const pinAliases = new Set(preflightAliases.map((alias) => alias.target));
+  if (pinGuard.targets.some((target) => pinAliases.has(target)))
+    fail(
+      "SKILL_REQUIRED_BY_PIN",
+      `An active pinned change requires ${request.target}.`,
+      pinGuard.activePins,
+    );
+  let targetOwned = Boolean(ownership.data.resources[request.target]);
+  for (const ownedTarget of Object.keys(ownership.data.resources)) {
+    if (ownedTarget === request.target) continue;
+    const ownedState = await stateAt(root, ownedTarget);
+    if (
+      ownedState.kind === "directory" &&
+      (await sameDirectory(targetState, ownedState))
+    )
+      targetOwned = true;
+    const ownedSkill = ownedTarget.split("/").at(-1);
+    if (ownedSkill === requestedSkill && pinAliases.has(ownedTarget))
+      targetOwned = true;
+  }
+  if (targetOwned)
+    fail(
+      "RESOURCE_TARGET_MANAGED",
+      `Managed skill target cannot be replaced: ${request.target}`,
+    );
+  const skill = request.target.split("/").at(-1)!;
+  const skillMarker = await lstatOrNull(
+    path.join(targetState.absolute, "SKILL.md"),
+  );
+  if (!skillMarker || skillMarker.isSymbolicLink() || !skillMarker.isFile())
+    fail(
+      "RESOURCE_REPLACEMENT_TARGET_INVALID",
+      `Target does not contain a regular SKILL.md: ${request.target}`,
+    );
+  const declarations = declarationsForBundle(
+    manifest,
+    request.bundle,
+    request.schema,
+  ).filter((declaration) => declaration.skill === skill);
+  if (!declarations.length)
+    fail(
+      "RESOURCE_TARGET_NOT_DECLARED",
+      `Skill '${skill}' is not declared in bundle '${request.bundle}'.`,
+    );
+  const declarationKeys = new Set(
+    declarations.map(
+      (declaration) => `${declaration.repository}\0${declaration.path}`,
+    ),
+  );
+  if (declarationKeys.size !== 1)
+    fail(
+      "RESOURCE_TARGET_AMBIGUOUS",
+      `Bundle '${request.bundle}' maps '${skill}' to multiple source directories.`,
+    );
+  const source = declarations[0]!;
+  const aliases = preflightAliases;
+  const remainingUnmanagedCollisions = await remainingReplacementCollisions(
+    root,
+    request.target,
+    aliases,
+    declarationsForBundle(manifest, request.bundle, request.schema),
+    profileFile.profiles,
+    ownership,
+  );
+  const parentRelative = path.posix.dirname(request.target);
+  const parentState = await stateAt(root, parentRelative);
+  if (parentState.kind !== "directory")
+    fail(
+      "RESOURCE_TARGET_UNSAFE",
+      `Skill target parent is not a real directory: ${parentRelative}`,
+    );
+  const [targetInfo, parentInfo] = await Promise.all([
+    lstat(targetState.absolute),
+    lstat(parentState.absolute),
+  ]);
+  const backupPaths = replacementPaths(root, request.backupId);
+  const reservation = await stateAt(
+    root,
+    path.posix.join(REPLACEMENT_BASE, request.backupId),
+  );
+  const emptyReceiptlessReservation =
+    reservation.kind === "directory" &&
+    (
+      await stateAt(
+        root,
+        path.posix.join(REPLACEMENT_BASE, request.backupId, "receipt.json"),
+      )
+    ).kind === "missing" &&
+    (await readdir(reservation.absolute)).length === 0;
+  if (
+    checkBackup &&
+    reservation.kind !== "missing" &&
+    !emptyReceiptlessReservation
+  )
+    fail(
+      "RESOURCE_BACKUP_ID_OCCUPIED",
+      `Backup identifier '${request.backupId}' is already reserved.`,
+      { backupPath: backupPaths.backup, receiptPath: backupPaths.receipt },
+    );
+  if (
+    reservation.kind === "symlink" ||
+    reservation.kind === "parent-conflict" ||
+    reservation.kind === "other" ||
+    reservation.kind === "file"
+  )
+    fail(
+      "RESOURCE_BACKUP_PATH_UNSAFE",
+      `Backup path is unsafe: ${backupPaths.directory}`,
+    );
+
+  const acquired = await acquireSources([source], options);
+  try {
+    const sourceRoot = acquired.roots.get(source.repository);
+    if (!sourceRoot)
+      fail(
+        "RESOURCE_SOURCE_UNAVAILABLE",
+        `No source checkout for ${source.repository}.`,
+      );
+    const sourceDirectory = await safeSourceDirectory(sourceRoot, source.path);
+    const [oldTree, sourceTree] = await Promise.all([
+      replacementTree(targetState.absolute),
+      replacementTree(sourceDirectory),
+    ]);
+    const [oldFinal, sourceFinal] = await Promise.all([
+      replacementTree(targetState.absolute),
+      replacementTree(sourceDirectory),
+    ]);
+    if (
+      !sameIdentity(targetInfo, await lstat(targetState.absolute)) ||
+      oldTree.digest !== oldFinal.digest ||
+      oldTree.identity !== oldFinal.identity ||
+      sourceTree.digest !== sourceFinal.digest ||
+      sourceTree.identity !== sourceFinal.identity
+    )
+      fail(
+        "RESOURCE_STALE",
+        "Target or declared source changed while computing preview.",
+      );
+    const changes = replacementDiff(oldTree, sourceTree);
+    for (const alias of aliases.filter((item) => item.kind === "host")) {
+      const issue = await hostArtifactIssue(
+        alias.id as SkillInstallHostId,
+        skill,
+        sourceDirectory,
+      );
+      if (issue)
+        fail("RESOURCE_HOST_ARTIFACT_INVALID", `${alias.id}: ${issue}`);
+    }
+    const binding = {
+      kind: "skill-replacement" as const,
+      request,
+      source,
+      sourceDigest: sourceTree.digest,
+      sourceIdentity: inputDigest({
+        source,
+        sourceDigest: sourceTree.digest,
+        skillManifest: manifest.digest,
+        bundleManifest: manifest.bundleDigest,
+      }),
+      oldDigest: oldTree.digest,
+      targetIdentity: oldTree.identity,
+      parentIdentity: directoryIdentity(parentInfo),
+      aliases,
+      remainingUnmanagedCollisions,
+      backupPath: backupPaths.backup,
+      manifestDigests: {
+        skills: manifest.digest,
+        skillBundles: manifest.bundleDigest,
+        profiles: profileFile.digest,
+      },
+      pinGuard,
+      ownershipRaw: ownership.raw,
+      inventory: changes.inventory,
+      diff: changes.diff,
+    };
+    const token = inputDigest(binding);
+    return freeze({
+      ...binding,
+      version: 1,
+      canApply: true,
+      inputDigest: token,
+      token,
+      freshness: { status: "current", digest: token },
+    });
+  } finally {
+    if (acquired.temporaryRoot)
+      await rm(acquired.temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+/** Preview one exact unmanaged target without changing it. */
+export async function previewSkillReplacement(
+  input: SkillReplacementRequest,
+  options: ResourceRuntimeOptions = {},
+): Promise<SkillReplacementPlan> {
+  return buildSkillReplacementPlan(input, options, true);
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function copyReplacementTree(
+  source: string,
+  destination: string,
+): Promise<void> {
+  const rootInfo = await lstat(source);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory())
+    fail("RESOURCE_SOURCE_INVALID", `Expected a real directory: ${source}`);
+  await mkdir(destination, { mode: Number(rootInfo.mode) & 0o777 });
+  const copy = async (from: string, to: string): Promise<void> => {
+    const names = (await readdir(from)).sort(compareReplacementPaths);
+    for (const name of names) {
+      const sourcePath = path.join(from, name);
+      const targetPath = path.join(to, name);
+      const info = await lstat(sourcePath);
+      if (info.isSymbolicLink())
+        fail("RESOURCE_SYMLINK", `Refusing to copy symlink: ${sourcePath}`);
+      if (info.isDirectory()) {
+        await mkdir(targetPath, { mode: Number(info.mode) & 0o777 });
+        await copy(sourcePath, targetPath);
+        await chmod(targetPath, Number(info.mode) & 0o777);
+        await syncDirectory(targetPath);
+      } else if (info.isFile()) {
+        const bytes = await readFile(sourcePath);
+        const handle = await open(targetPath, "wx", Number(info.mode) & 0o777);
+        try {
+          await handle.writeFile(bytes);
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        await chmod(targetPath, Number(info.mode) & 0o777);
+      } else {
+        fail(
+          "RESOURCE_UNSUPPORTED_ENTRY",
+          `Refusing to copy unsupported entry: ${sourcePath}`,
+        );
+      }
+    }
+  };
+  await copy(source, destination);
+  await chmod(destination, Number(rootInfo.mode) & 0o777);
+  await syncDirectory(destination);
+  await syncDirectory(path.dirname(destination));
+}
+
+async function persistReplacementReceipt(
+  root: string,
+  id: string,
+  receipt: SkillReplacementReceipt,
+  expectedRaw: string | null,
+): Promise<string> {
+  const paths = replacementPaths(root, id);
+  const current = await stateAt(root, paths.receiptRelative);
+  if (
+    current.kind === "symlink" ||
+    current.kind === "parent-conflict" ||
+    (current.kind !== "missing" && current.kind !== "file")
+  )
+    fail(
+      "RESOURCE_RECEIPT_UNSAFE",
+      `Replacement receipt path is unsafe: ${paths.receipt}`,
+    );
+  const currentRaw =
+    current.kind === "file" ? await readFile(paths.receipt, "utf8") : null;
+  if (currentRaw !== expectedRaw)
+    fail(
+      "RESOURCE_RECEIPT_STALE",
+      "Replacement receipt changed during transaction.",
+    );
+  const nextRaw = `${JSON.stringify(receipt, null, 2)}\n`;
+  const temporary = path.join(paths.directory, `.receipt-${randomUUID()}.tmp`);
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(nextRaw, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    const latest = await stateAt(root, paths.receiptRelative);
+    const latestRaw =
+      latest.kind === "file" ? await readFile(paths.receipt, "utf8") : null;
+    if (
+      latest.kind === "symlink" ||
+      latest.kind === "parent-conflict" ||
+      latestRaw !== expectedRaw
+    )
+      fail(
+        "RESOURCE_RECEIPT_STALE",
+        "Replacement receipt changed during transaction.",
+      );
+    if (expectedRaw === null) {
+      await link(temporary, paths.receipt);
+      await unlink(temporary);
+    } else {
+      await rename(temporary, paths.receipt);
+    }
+    await syncDirectory(paths.directory);
+  } catch (error) {
+    await unlink(temporary).catch((cleanupError) => {
+      if (!isMissing(cleanupError)) throw cleanupError;
+    });
+    throw error;
+  }
+  return nextRaw;
+}
+
+async function replaceOwnershipRaw(
+  root: string,
+  nextRaw: string | null,
+  expectedRaw: string | null,
+): Promise<void> {
+  await ensureDirectories(root, ".openspec/opsx-schema");
+  const file = path.join(root, OWNERSHIP_FILE);
+  const current = await stateAt(root, OWNERSHIP_FILE);
+  if (
+    current.kind === "symlink" ||
+    current.kind === "parent-conflict" ||
+    (current.kind !== "missing" && current.kind !== "file")
+  )
+    fail(
+      "RESOURCE_OWNERSHIP_UNSAFE",
+      "Managed resource ownership file is unsafe.",
+    );
+  const currentRaw =
+    current.kind === "file" ? await readFile(file, "utf8") : null;
+  if (currentRaw !== expectedRaw)
+    fail(
+      "RESOURCE_STALE",
+      "Managed resource ownership changed during recovery.",
+    );
+  if (nextRaw === null) {
+    if (current.kind === "file") {
+      await unlink(file);
+      await syncDirectory(path.dirname(file));
+    }
+    return;
+  }
+  const temporary = path.join(
+    path.dirname(file),
+    `.managed-resources-${randomUUID()}.tmp`,
+  );
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(nextRaw, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    const latest = await stateAt(root, OWNERSHIP_FILE);
+    const latestRaw =
+      latest.kind === "file" ? await readFile(file, "utf8") : null;
+    if (
+      latest.kind === "symlink" ||
+      latest.kind === "parent-conflict" ||
+      latestRaw !== expectedRaw
+    )
+      fail(
+        "RESOURCE_STALE",
+        "Managed resource ownership changed during recovery.",
+      );
+    if (expectedRaw === null) {
+      await link(temporary, file);
+      await unlink(temporary);
+    } else {
+      await rename(temporary, file);
+    }
+    await syncDirectory(path.dirname(file));
+  } catch (error) {
+    await unlink(temporary).catch((cleanupError) => {
+      if (!isMissing(cleanupError)) throw cleanupError;
+    });
+    throw error;
+  }
+}
+
+function replacementOwner(plan: SkillReplacementPlan): OwnershipEntry {
+  return {
+    digest: plan.sourceDigest,
+    skill: plan.source.skill,
+    repository: plan.source.repository,
+    sourcePath: plan.source.path,
+    profiles: plan.aliases
+      .filter((alias) => alias.kind === "profile")
+      .map((alias) => alias.id)
+      .sort(),
+    ...(plan.aliases.some((alias) => alias.kind === "host")
+      ? {
+          hosts: plan.aliases
+            .filter((alias) => alias.kind === "host")
+            .map((alias) => alias.id as SkillInstallHostId)
+            .sort(),
+        }
+      : {}),
+  };
+}
+
+async function checkReplacementBoundary(
+  plan: SkillReplacementPlan,
+  sourceDirectory: string,
+  options: ResourceRuntimeOptions,
+): Promise<void> {
+  const [profiles, manifest, ownership, pins, targetState, parentState] =
+    await Promise.all([
+      readProfiles(profileManifestPathFn(options.profileManifestPath)),
+      readSchemaManifest(plan.request.schemaRoot),
+      readOwnership(plan.request.projectRoot),
+      requiredSkillTargets(plan.request.projectRoot, options),
+      stateAt(plan.request.projectRoot, plan.request.target),
+      stateAt(
+        plan.request.projectRoot,
+        path.posix.dirname(plan.request.target),
+      ),
+    ]);
+  if (
+    profiles.digest !== plan.manifestDigests.profiles ||
+    manifest.digest !== plan.manifestDigests.skills ||
+    manifest.bundleDigest !== plan.manifestDigests.skillBundles ||
+    ownership.raw !== plan.ownershipRaw ||
+    !pins.complete ||
+    pins.digest !== plan.pinGuard.digest ||
+    pins.targets.some((target) =>
+      plan.aliases.some((alias) => alias.target === target),
+    ) ||
+    targetState.kind !== "directory" ||
+    parentState.kind !== "directory"
+  )
+    fail(
+      "RESOURCE_STALE",
+      "Replacement guard, manifests, ownership, or target changed before swap.",
+    );
+  await assertNoSwitchRecoveryForAliases(
+    plan.request.projectRoot,
+    plan.aliases,
+  );
+  const parentInfo = await lstat(parentState.absolute);
+  const [targetTree, sourceTree] = await Promise.all([
+    replacementTree(targetState.absolute),
+    replacementTree(sourceDirectory),
+  ]);
+  if (
+    targetTree.identity !== plan.targetIdentity ||
+    inputDigest({
+      source: plan.source,
+      sourceDigest: sourceTree.digest,
+      skillManifest: manifest.digest,
+      bundleManifest: manifest.bundleDigest,
+    }) !== plan.sourceIdentity ||
+    directoryIdentity(parentInfo) !== plan.parentIdentity ||
+    targetTree.digest !== plan.oldDigest ||
+    sourceTree.digest !== plan.sourceDigest
+  )
+    fail(
+      "RESOURCE_STALE",
+      "Replacement target or declared source changed before swap.",
+    );
+}
+
+async function checkReplacementPins(
+  plan: SkillReplacementPlan,
+  options: ResourceRuntimeOptions,
+): Promise<void> {
+  const pins = await requiredSkillTargets(plan.request.projectRoot, options);
+  if (
+    !pins.complete ||
+    pins.digest !== plan.pinGuard.digest ||
+    pins.targets.some((target) =>
+      plan.aliases.some((alias) => alias.target === target),
+    )
+  )
+    fail(
+      "RESOURCE_STALE",
+      "Active skill pin inventory changed or now requires the replacement target.",
+      pins.diagnostics,
+    );
+  await assertNoSwitchRecoveryForAliases(
+    plan.request.projectRoot,
+    plan.aliases,
+  );
+}
+
+function receiptPathWithinTarget(
+  target: string,
+  candidate: string,
+  prefix: string,
+  id: string,
+): boolean {
+  if (
+    !safeTargetDirectory(candidate) ||
+    candidate.includes("\\") ||
+    path.posix.isAbsolute(candidate) ||
+    candidate.split("/").some((part) => part === "." || part === "..")
+  )
+    return false;
+  const parent = path.posix.dirname(target);
+  const basename = path.posix.basename(candidate);
+  return (
+    path.posix.dirname(candidate) === parent &&
+    basename.startsWith(`.opsx-${prefix}-${id}-`)
+  );
+}
+
+async function checkInstalledReplacementBoundary(
+  plan: SkillReplacementPlan,
+  options: ResourceRuntimeOptions,
+): Promise<void> {
+  const [profiles, manifest, ownership, pins, target] = await Promise.all([
+    readProfiles(profileManifestPathFn(options.profileManifestPath)),
+    readSchemaManifest(plan.request.schemaRoot),
+    readOwnership(plan.request.projectRoot),
+    requiredSkillTargets(plan.request.projectRoot, options),
+    stateAt(plan.request.projectRoot, plan.request.target),
+  ]);
+  if (
+    profiles.digest !== plan.manifestDigests.profiles ||
+    manifest.digest !== plan.manifestDigests.skills ||
+    manifest.bundleDigest !== plan.manifestDigests.skillBundles ||
+    ownership.raw !== plan.ownershipRaw ||
+    !pins.complete ||
+    pins.digest !== plan.pinGuard.digest ||
+    pins.targets.some((targetPath) =>
+      plan.aliases.some((alias) => alias.target === targetPath),
+    ) ||
+    target.kind !== "directory" ||
+    (await digestTree(target.absolute)) !== plan.sourceDigest
+  )
+    fail(
+      "RESOURCE_STALE",
+      "Installed target, manifests, ownership, or active pins changed before ownership transfer.",
+    );
+  await assertNoSwitchRecoveryForAliases(
+    plan.request.projectRoot,
+    plan.aliases,
+  );
+}
+
+async function rollbackReplacementIfSafe(
+  plan: SkillReplacementPlan,
+  receipt: SkillReplacementReceipt,
+  options: ResourceRuntimeOptions,
+): Promise<"restored" | "already-intact" | false> {
+  const root = plan.request.projectRoot;
+  const profiles = await readProfiles(
+    profileManifestPathFn(options.profileManifestPath),
+  );
+  const aliases = await replacementAliases(
+    root,
+    receipt.target,
+    receipt.source.skill,
+    profiles,
+  );
+  const target = path.join(root, ...receipt.target.split("/"));
+  const rollback = path.join(root, ...receipt.rollbackPath.split("/"));
+  const [targetState, rollbackState, parentState, ownership, pins] =
+    await Promise.all([
+      stateAt(root, receipt.target),
+      stateAt(root, receipt.rollbackPath),
+      stateAt(root, path.posix.dirname(receipt.target)),
+      readOwnership(root),
+      requiredSkillTargets(root, options),
+    ]);
+  if (
+    parentState.kind !== "directory" ||
+    directoryIdentity(await lstat(parentState.absolute)) !==
+      receipt.parentIdentity
+  )
+    return false;
+  await assertNoSwitchRecoveryForAliases(root, aliases);
+  if (
+    !pins.complete ||
+    pins.targets.some((targetPath) =>
+      aliases.some((alias) => alias.target === targetPath),
+    ) ||
+    (ownership.raw !== receipt.beforeOwnershipRaw &&
+      ownership.raw !== receipt.afterOwnershipRaw)
+  )
+    return false;
+  if (rollbackState.kind !== "directory")
+    return targetState.kind === "directory" &&
+      (await digestTree(targetState.absolute)) === receipt.beforeDigest &&
+      ownership.raw === receipt.beforeOwnershipRaw
+      ? "already-intact"
+      : false;
+  if ((await digestTree(rollbackState.absolute)) !== receipt.beforeDigest)
+    return false;
+  if (targetState.kind === "directory") {
+    if (
+      !receipt.installedIdentity ||
+      directoryIdentity(await lstat(targetState.absolute)) !==
+        receipt.installedIdentity ||
+      (await digestTree(targetState.absolute)) !== receipt.sourceDigest
+    )
+      return false;
+    await removeOwnedTree(target);
+  } else if (targetState.kind !== "missing") {
+    return false;
+  }
+  if (await lstatOrNull(target)) return false;
+  await rename(rollback, target);
+  await syncDirectory(path.dirname(target));
+  if (ownership.raw === receipt.afterOwnershipRaw)
+    await replaceOwnershipRaw(
+      root,
+      receipt.beforeOwnershipRaw,
+      receipt.afterOwnershipRaw,
+    );
+  const [restored, finalOwnership] = await Promise.all([
+    digestTree(target),
+    readOwnership(root),
+  ]);
+  return restored === receipt.beforeDigest &&
+    finalOwnership.raw === receipt.beforeOwnershipRaw
+    ? "restored"
+    : false;
+}
+
+async function readReplacementReceipt(
+  projectRoot: string,
+  backupId: string,
+): Promise<{ receipt: SkillReplacementReceipt; raw: string }> {
+  if (!SAFE_BACKUP_ID.test(backupId))
+    fail(
+      "RESOURCE_BACKUP_ID_INVALID",
+      "Backup identifier is not a safe path component.",
+    );
+  const root = await projectRootPath(projectRoot);
+  const paths = replacementPaths(root, backupId);
+  const state = await stateAt(root, paths.receiptRelative);
+  if (state.kind === "missing")
+    fail(
+      "RESOURCE_RECEIPT_MISSING",
+      `No replacement receipt exists for '${backupId}'.`,
+      {
+        directory: paths.directory,
+        backup: paths.backup,
+        receipt: paths.receipt,
+      },
+    );
+  if (state.kind !== "file")
+    fail(
+      "RESOURCE_RECEIPT_UNSAFE",
+      `Replacement receipt is unsafe: ${paths.receipt}`,
+    );
+  const raw = await readFile(paths.receipt, "utf8");
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    fail(
+      "RESOURCE_RECEIPT_CORRUPT",
+      `Replacement receipt is malformed: ${paths.receipt}`,
+    );
+  }
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.backupId !== backupId ||
+    typeof value.schema !== "string" ||
+    !safeName(value.schema) ||
+    (value.bundle !== "default" &&
+      value.bundle !== "recommended" &&
+      value.bundle !== "all") ||
+    typeof value.target !== "string" ||
+    !safeTargetDirectory(value.target) ||
+    !isRecord(value.source) ||
+    typeof value.source.repository !== "string" ||
+    !safeRepository(value.source.repository) ||
+    typeof value.source.path !== "string" ||
+    !safeRelative(value.source.path) ||
+    typeof value.source.skill !== "string" ||
+    !safeName(value.source.skill) ||
+    path.posix.basename(value.target) !== value.source.skill ||
+    !DIGEST_RE.test(String(value.sourceDigest)) ||
+    typeof value.sourceIdentity !== "string" ||
+    !isRecord(value.manifestDigests) ||
+    !DIGEST_RE.test(String(value.manifestDigests.skills)) ||
+    !(
+      value.manifestDigests.skillBundles === null ||
+      (typeof value.manifestDigests.skillBundles === "string" &&
+        DIGEST_RE.test(value.manifestDigests.skillBundles))
+    ) ||
+    !DIGEST_RE.test(String(value.manifestDigests.profiles)) ||
+    !DIGEST_RE.test(String(value.beforeDigest)) ||
+    typeof value.beforeIdentity !== "string" ||
+    typeof value.parentIdentity !== "string" ||
+    value.backupPath !== paths.backupRelative ||
+    !(
+      value.backupDigest === null ||
+      (typeof value.backupDigest === "string" &&
+        DIGEST_RE.test(value.backupDigest))
+    ) ||
+    !(
+      value.installedIdentity === null ||
+      typeof value.installedIdentity === "string"
+    ) ||
+    typeof value.stagePath !== "string" ||
+    !receiptPathWithinTarget(
+      value.target,
+      value.stagePath,
+      "replace",
+      backupId,
+    ) ||
+    typeof value.rollbackPath !== "string" ||
+    !receiptPathWithinTarget(
+      value.target,
+      value.rollbackPath,
+      "replace-rollback",
+      backupId,
+    ) ||
+    !(
+      value.beforeOwnershipRaw === null ||
+      typeof value.beforeOwnershipRaw === "string"
+    ) ||
+    typeof value.afterOwnershipRaw !== "string" ||
+    !Array.isArray(value.aliases) ||
+    value.aliases.some(
+      (alias) =>
+        !isRecord(alias) ||
+        (alias.kind !== "profile" && alias.kind !== "host") ||
+        typeof alias.id !== "string" ||
+        !safeName(alias.id) ||
+        typeof alias.target !== "string" ||
+        !safeTargetDirectory(alias.target),
+    ) ||
+    typeof value.phase !== "string" ||
+    !Object.hasOwn(RECEIPT_PHASES, value.phase) ||
+    (value.error !== undefined && typeof value.error !== "string") ||
+    (value.restore !== undefined &&
+      (!isRecord(value.restore) ||
+        typeof value.restore.phase !== "string" ||
+        ![
+          "intent",
+          "stage-ready",
+          "target-moving",
+          "target-moved",
+          "target-restoring",
+          "target-restored",
+          "ownership-restoring",
+          "ownership-restored",
+          "complete",
+          "partial",
+        ].includes(value.restore.phase) ||
+        typeof value.restore.stagePath !== "string" ||
+        !receiptPathWithinTarget(
+          value.target,
+          value.restore.stagePath,
+          "restore",
+          backupId,
+        ) ||
+        typeof value.restore.rollbackPath !== "string" ||
+        !receiptPathWithinTarget(
+          value.target,
+          value.restore.rollbackPath,
+          "restore-rollback",
+          backupId,
+        ) ||
+        (value.restore.error !== undefined &&
+          typeof value.restore.error !== "string")))
+  )
+    fail(
+      "RESOURCE_RECEIPT_CORRUPT",
+      `Replacement receipt has unsupported or unsafe fields: ${paths.receipt}`,
+    );
+  const receipt = value as unknown as SkillReplacementReceipt;
+  const beforeOwnership = readOwnershipResources(receipt.beforeOwnershipRaw);
+  const afterOwnership = readOwnershipResources(receipt.afterOwnershipRaw);
+  if (Object.hasOwn(beforeOwnership, receipt.target))
+    fail(
+      "RESOURCE_RECEIPT_CORRUPT",
+      "Replacement receipt claims a pre-existing owner for an unmanaged target.",
+    );
+  const installedOwner = afterOwnership[receipt.target];
+  if (
+    !installedOwner ||
+    installedOwner.digest !== receipt.sourceDigest ||
+    installedOwner.skill !== receipt.source.skill ||
+    installedOwner.repository !== receipt.source.repository ||
+    installedOwner.sourcePath !== receipt.source.path
+  )
+    fail(
+      "RESOURCE_RECEIPT_CORRUPT",
+      "Replacement receipt ownership does not match its declared source.",
+    );
+  const priorTargets = Object.keys(beforeOwnership).sort();
+  const afterTargets = Object.keys(afterOwnership)
+    .filter((target) => target !== receipt.target)
+    .sort();
+  if (
+    JSON.stringify(priorTargets) !== JSON.stringify(afterTargets) ||
+    priorTargets.some(
+      (target) =>
+        JSON.stringify(beforeOwnership[target]) !==
+        JSON.stringify(afterOwnership[target]),
+    )
+  )
+    fail(
+      "RESOURCE_RECEIPT_CORRUPT",
+      "Replacement receipt changes unrelated ownership entries.",
+    );
+  return { receipt, raw };
+}
+
+/** Read-only exact receipt and current filesystem evidence. */
+export async function inspectSkillReplacement(
+  projectRoot: string,
+  backupId: string,
+): Promise<SkillReplacementInspection> {
+  const root = await projectRootPath(projectRoot);
+  const { receipt } = await readReplacementReceipt(root, backupId);
+  const paths = replacementPaths(root, backupId);
+  const [target, backup, stage, rollback, ownership] = await Promise.all([
+    stateAt(root, receipt.target),
+    stateAt(root, receipt.backupPath),
+    stateAt(root, receipt.stagePath),
+    stateAt(root, receipt.rollbackPath),
+    readOwnership(root),
+  ]);
+  const targetDigest =
+    target.kind === "directory" ? await digestTree(target.absolute) : null;
+  const backupDigest =
+    backup.kind === "directory" ? await digestTree(backup.absolute) : null;
+  const restoreStage = receipt.restore
+    ? await stateAt(root, receipt.restore.stagePath)
+    : null;
+  const restoreRollback = receipt.restore
+    ? await stateAt(root, receipt.restore.rollbackPath)
+    : null;
+  const restoreRollbackDigest =
+    restoreRollback?.kind === "directory"
+      ? await digestTree(restoreRollback.absolute)
+      : null;
+  return freeze({
+    backupId,
+    receiptPath: paths.receipt,
+    phase: receipt.phase,
+    receipt,
+    observed: {
+      targetKind: target.kind,
+      targetDigest,
+      ownershipMatchesBefore: ownership.raw === receipt.beforeOwnershipRaw,
+      ownershipMatchesAfter: ownership.raw === receipt.afterOwnershipRaw,
+      backupKind: backup.kind,
+      backupDigest,
+      stageKind: stage.kind,
+      rollbackKind: rollback.kind,
+      restoreStageKind: restoreStage?.kind ?? null,
+      restoreRollbackKind: restoreRollback?.kind ?? null,
+      restoreRollbackDigest,
+    },
+  });
+}
+
+/** Apply exact reviewed replacement token after project-lock then resource-lock revalidation. */
+export async function applySkillReplacement(
+  plan: SkillReplacementPlan,
+  suppliedToken: string,
+  options: ResourceRuntimeOptions = {},
+): Promise<SkillReplacementInspection> {
+  if (plan.kind !== "skill-replacement" || plan.version !== 1)
+    fail("RESOURCE_PLAN_INVALID", "Unsupported skill replacement plan.");
+  if (suppliedToken !== plan.token || plan.inputDigest !== plan.token)
+    fail(
+      "RESOURCE_STALE",
+      "Skill replacement token does not match the reviewed preview.",
+    );
+  return withReplacementMutationLocks(plan.request.projectRoot, async () => {
+    await cleanupEmptyReceiptlessReservation(
+      plan.request.projectRoot,
+      plan.request.backupId,
+    );
+    const locked = await buildSkillReplacementPlan(plan.request, options, true);
+    if (locked.token !== plan.token)
+      fail("RESOURCE_STALE", "Skill replacement inputs changed after preview.");
+    plan = locked;
+    const paths = replacementPaths(
+      plan.request.projectRoot,
+      plan.request.backupId,
+    );
+    await ensureDirectories(plan.request.projectRoot, REPLACEMENT_BASE);
+    try {
+      await mkdir(paths.directory, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+        fail(
+          "RESOURCE_BACKUP_ID_OCCUPIED",
+          `Backup identifier '${plan.request.backupId}' is already reserved.`,
+        );
+      throw error;
+    }
+    await syncDirectory(path.dirname(paths.directory));
+    const parent = path.posix.dirname(plan.request.target);
+    const nonce = randomUUID();
+    const stagePath = path.posix.join(
+      parent,
+      `.opsx-replace-${plan.request.backupId}-${nonce}.stage`,
+    );
+    const rollbackPath = path.posix.join(
+      parent,
+      `.opsx-replace-rollback-${plan.request.backupId}-${nonce}.old`,
+    );
+    const afterOwnershipData: OwnershipData = {
+      schemaVersion: 1,
+      resources: {
+        ...readOwnershipResources(plan.ownershipRaw),
+        [plan.request.target]: replacementOwner(plan),
+      },
+    };
+    const afterOwnershipRaw = `${JSON.stringify(afterOwnershipData, null, 2)}\n`;
+    let receipt: SkillReplacementReceipt = {
+      schemaVersion: 1,
+      backupId: plan.request.backupId,
+      phase: "intent",
+      schema: plan.request.schema,
+      bundle: plan.request.bundle,
+      target: plan.request.target,
+      source: plan.source,
+      sourceDigest: plan.sourceDigest,
+      sourceIdentity: plan.sourceIdentity,
+      manifestDigests: plan.manifestDigests,
+      beforeDigest: plan.oldDigest,
+      beforeIdentity: plan.targetIdentity,
+      parentIdentity: plan.parentIdentity,
+      backupPath: paths.backupRelative,
+      backupDigest: null,
+      installedIdentity: null,
+      stagePath,
+      rollbackPath,
+      beforeOwnershipRaw: plan.ownershipRaw,
+      afterOwnershipRaw,
+      aliases: plan.aliases,
+    };
+    let receiptRaw = await persistReplacementReceipt(
+      plan.request.projectRoot,
+      plan.request.backupId,
+      receipt,
+      null,
+    );
+    const updateReceipt = async (next: SkillReplacementReceipt) => {
+      receiptRaw = await persistReplacementReceipt(
+        plan.request.projectRoot,
+        plan.request.backupId,
+        next,
+        receiptRaw,
+      );
+      receipt = next;
+    };
+    let sourceTemp: string | null = null;
+    try {
+      const acquired = await acquireSources([plan.source], options);
+      sourceTemp = acquired.temporaryRoot;
+      const sourceRoot = acquired.roots.get(plan.source.repository);
+      if (!sourceRoot)
+        fail(
+          "RESOURCE_SOURCE_UNAVAILABLE",
+          `No source checkout for ${plan.source.repository}.`,
+        );
+      const sourceDirectory = await safeSourceDirectory(
+        sourceRoot,
+        plan.source.path,
+      );
+      await updateReceipt({ ...receipt, phase: "backup-copying" });
+      await copyReplacementTree(
+        path.join(plan.request.projectRoot, ...plan.request.target.split("/")),
+        paths.backup,
+      );
+      const backupDigest = await digestTree(paths.backup);
+      if (backupDigest !== plan.oldDigest)
+        fail(
+          "RESOURCE_STALE",
+          "Copied backup does not match the reviewed unmanaged tree.",
+        );
+      await checkReplacementBoundary(plan, sourceDirectory, options);
+      await updateReceipt({ ...receipt, phase: "backup-ready", backupDigest });
+
+      await updateReceipt({ ...receipt, phase: "stage-copying", backupDigest });
+      const stageAbsolute = path.join(
+        plan.request.projectRoot,
+        ...stagePath.split("/"),
+      );
+      await copyReplacementTree(sourceDirectory, stageAbsolute);
+      if ((await digestTree(stageAbsolute)) !== plan.sourceDigest)
+        fail(
+          "RESOURCE_SOURCE_STALE",
+          "Staged source does not match its reviewed digest.",
+        );
+      await updateReceipt({ ...receipt, phase: "stage-ready", backupDigest });
+      await checkReplacementBoundary(plan, sourceDirectory, options);
+      const rollbackAbsolute = path.join(
+        plan.request.projectRoot,
+        ...rollbackPath.split("/"),
+      );
+      if (await lstatOrNull(rollbackAbsolute))
+        fail(
+          "RESOURCE_PATH_UNSAFE",
+          `Rollback path is already occupied: ${rollbackPath}`,
+        );
+      await updateReceipt({
+        ...receipt,
+        phase: "target-moving-original",
+        backupDigest,
+      });
+      await checkReplacementBoundary(plan, sourceDirectory, options);
+      await checkReplacementPins(plan, options);
+      await checkReplacementBoundary(plan, sourceDirectory, options);
+      await rename(
+        path.join(plan.request.projectRoot, ...plan.request.target.split("/")),
+        rollbackAbsolute,
+      );
+      await syncDirectory(path.dirname(rollbackAbsolute));
+      await updateReceipt({
+        ...receipt,
+        phase: "target-original-moved",
+        backupDigest,
+      });
+      await updateReceipt({
+        ...receipt,
+        phase: "target-installing",
+        backupDigest,
+      });
+      const targetAbsolute = path.join(
+        plan.request.projectRoot,
+        ...plan.request.target.split("/"),
+      );
+      if (await lstatOrNull(targetAbsolute))
+        fail("RESOURCE_STALE", "A target appeared during replacement swap.");
+      await rename(stageAbsolute, targetAbsolute);
+      await syncDirectory(path.dirname(targetAbsolute));
+      const installedTree = await replacementTree(targetAbsolute);
+      if (installedTree.digest !== plan.sourceDigest)
+        fail(
+          "RESOURCE_PARTIAL",
+          "Installed target does not match the declared source digest.",
+        );
+      await updateReceipt({
+        ...receipt,
+        phase: "target-installed",
+        backupDigest,
+        installedIdentity: directoryIdentity(await lstat(targetAbsolute)),
+      });
+      await updateReceipt({
+        ...receipt,
+        phase: "ownership-updating",
+        backupDigest,
+      });
+      await checkReplacementPins(plan, options);
+      await checkInstalledReplacementBoundary(plan, options);
+      await writeOwnership(
+        plan.request.projectRoot,
+        afterOwnershipData,
+        plan.ownershipRaw,
+      );
+      await syncDirectory(
+        path.dirname(path.join(plan.request.projectRoot, OWNERSHIP_FILE)),
+      );
+      await updateReceipt({
+        ...receipt,
+        phase: "ownership-updated",
+        backupDigest,
+      });
+      const [finalTarget, finalOwnership, verifiedBackup] = await Promise.all([
+        digestTree(targetAbsolute),
+        readOwnership(plan.request.projectRoot),
+        digestTree(paths.backup),
+      ]);
+      if (
+        finalTarget !== plan.sourceDigest ||
+        finalOwnership.raw !== afterOwnershipRaw ||
+        verifiedBackup !== plan.oldDigest
+      )
+        fail(
+          "RESOURCE_PARTIAL",
+          "Replacement target, ownership, or verified backup is inconsistent.",
+        );
+      await updateReceipt({ ...receipt, phase: "complete", backupDigest });
+      if (sourceTemp) await rm(sourceTemp, { recursive: true, force: true });
+      return inspectSkillReplacement(
+        plan.request.projectRoot,
+        plan.request.backupId,
+      );
+    } catch (error) {
+      if (sourceTemp)
+        await rm(sourceTemp, { recursive: true, force: true }).catch(() => {});
+      const failure = error instanceof Error ? error.message : String(error);
+      let recovery: "restored" | "already-intact" | false = false;
+      try {
+        recovery = await rollbackReplacementIfSafe(plan, receipt, options);
+      } catch {
+        recovery = false;
+      }
+      try {
+        await updateReceipt({
+          ...receipt,
+          phase: "partial",
+          error: `${failure}${recovery === "restored" ? " Safe automatic rollback restored the prior target and ownership." : recovery === "already-intact" ? " Original target and ownership remain unchanged." : " Automatic rollback was unsafe or incomplete; inspect exact paths and states."}`,
+        });
+      } catch (receiptError) {
+        fail(
+          "RESOURCE_PARTIAL",
+          "Replacement failed and its receipt could not record the latest phase.",
+          {
+            target: plan.request.target,
+            backup: paths.backup,
+            receipt: paths.receipt,
+            stage: stagePath,
+            rollback: rollbackPath,
+            error: failure,
+            receiptError:
+              receiptError instanceof Error
+                ? receiptError.message
+                : String(receiptError),
+          },
+        );
+      }
+      fail(
+        "RESOURCE_PARTIAL",
+        "Skill replacement stopped in a recoverable partial state; inspect its receipt before retrying.",
+        {
+          backupId: plan.request.backupId,
+          target: plan.request.target,
+          backup: paths.backup,
+          receipt: paths.receipt,
+          stage: stagePath,
+          rollback: rollbackPath,
+          phase: receipt.phase,
+          error: failure,
+        },
+      );
+    }
+  });
+}
+
+function readOwnershipResources(
+  raw: string | null,
+): Record<string, OwnershipEntry> {
+  if (raw === null) return {};
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    fail(
+      "RESOURCE_OWNERSHIP_CORRUPT",
+      "Managed resource ownership file is not valid JSON.",
+    );
+  }
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !isRecord(value.resources) ||
+    Object.keys(value).some(
+      (key) => key !== "schemaVersion" && key !== "resources",
+    )
+  )
+    fail(
+      "RESOURCE_OWNERSHIP_CORRUPT",
+      "Managed resource ownership file has an unsupported shape.",
+    );
+  const resources: Record<string, OwnershipEntry> = {};
+  for (const [target, item] of Object.entries(value.resources)) {
+    if (
+      !safeTargetDirectory(target) ||
+      !isRecord(item) ||
+      Object.keys(item).some(
+        (key) =>
+          ![
+            "digest",
+            "skill",
+            "repository",
+            "sourcePath",
+            "profiles",
+            "hosts",
+          ].includes(key),
+      ) ||
+      typeof item.digest !== "string" ||
+      !DIGEST_RE.test(item.digest) ||
+      typeof item.skill !== "string" ||
+      !safeName(item.skill) ||
+      typeof item.repository !== "string" ||
+      !safeRepository(item.repository) ||
+      typeof item.sourcePath !== "string" ||
+      !safeRelative(item.sourcePath) ||
+      !Array.isArray(item.profiles) ||
+      item.profiles.some(
+        (profile) => typeof profile !== "string" || !safeName(profile),
+      ) ||
+      (item.hosts !== undefined &&
+        (!Array.isArray(item.hosts) ||
+          item.hosts.some(
+            (host) =>
+              typeof host !== "string" ||
+              !Object.hasOwn(SKILL_HOST_CONTRACTS, host),
+          ) ||
+          new Set(item.hosts).size !== item.hosts.length))
+    )
+      fail(
+        "RESOURCE_OWNERSHIP_CORRUPT",
+        `Invalid resource ownership entry: ${target}`,
+      );
+    resources[target] = item as unknown as OwnershipEntry;
+  }
+  return resources;
+}
+
+/** Fresh restore preview for a completed or inspectable partial replacement. */
+export async function previewSkillRestore(
+  projectRoot: string,
+  backupId: string,
+  options: ResourceRuntimeOptions = {},
+): Promise<SkillRestorePlan> {
+  const root = await projectRootPath(projectRoot);
+  const { receipt, raw } = await readReplacementReceipt(root, backupId);
+  await refuseOverlappingReplacementRecovery(root, receipt.target, backupId);
+  const paths = replacementPaths(root, backupId);
+  const profiles = await readProfiles(
+    profileManifestPathFn(options.profileManifestPath),
+  );
+  const trustedSource = await trustedReplacementSource(root, receipt, options);
+  const aliases = await replacementAliases(
+    root,
+    receipt.target,
+    trustedSource.skill,
+    profiles,
+  );
+  await assertNoSwitchRecoveryForAliases(root, aliases);
+  const parentState = await stateAt(root, path.posix.dirname(receipt.target));
+  if (parentState.kind !== "directory")
+    fail(
+      "RESOURCE_RESTORE_TARGET_CHANGED",
+      "Replacement target parent is not a real directory.",
+    );
+  const targetParentIdentity = directoryIdentity(
+    await lstat(parentState.absolute),
+  );
+  const [backupState, targetState, ownership, pinGuard] = await Promise.all([
+    stateAt(root, receipt.backupPath),
+    stateAt(root, receipt.target),
+    readOwnership(root),
+    requiredSkillTargets(root, options),
+  ]);
+  if (!pinGuard.complete)
+    fail(
+      "SKILL_REQUIREMENTS_INCOMPLETE",
+      "Active skill targets cannot be completely verified; restore is blocked.",
+      pinGuard.diagnostics,
+    );
+  if (
+    pinGuard.targets.some((target) =>
+      aliases.some((alias) => alias.target === target),
+    )
+  )
+    fail(
+      "SKILL_REQUIRED_BY_PIN",
+      `An active pinned change requires ${receipt.target}.`,
+      pinGuard.activePins,
+    );
+  if (backupState.kind !== "directory")
+    fail(
+      "RESOURCE_BACKUP_MISSING",
+      `Verified replacement backup is unavailable: ${paths.backup}`,
+    );
+  const backupDigest = await digestTree(backupState.absolute);
+  const backupTree = await replacementTree(backupState.absolute);
+  if (
+    !receipt.backupDigest ||
+    backupDigest !== receipt.backupDigest ||
+    backupDigest !== receipt.beforeDigest
+  )
+    fail(
+      "RESOURCE_BACKUP_CORRUPT",
+      `Replacement backup does not match receipt: ${paths.backup}`,
+    );
+  if (
+    ownership.raw !== receipt.beforeOwnershipRaw &&
+    ownership.raw !== receipt.afterOwnershipRaw
+  )
+    fail(
+      "RESOURCE_RESTORE_OWNERSHIP_CHANGED",
+      "Ownership bytes differ from both recorded replacement states.",
+    );
+  let currentTargetDigest: string | null = null;
+  let currentTargetIdentity: string | null = null;
+  let targetSnapshot: ReplacementTree | null = null;
+  let recoverableRestoreState = false;
+  if (targetState.kind === "directory") {
+    const tree = await replacementTree(targetState.absolute);
+    targetSnapshot = tree;
+    currentTargetDigest = tree.digest;
+    currentTargetIdentity = tree.identity;
+    const isManagedResult =
+      tree.digest === receipt.sourceDigest &&
+      ownership.raw === receipt.afterOwnershipRaw;
+    const isUnownedInterruptedResult =
+      tree.digest === receipt.sourceDigest &&
+      ownership.raw === receipt.beforeOwnershipRaw;
+    const alreadyRestored =
+      tree.digest === receipt.beforeDigest &&
+      ownership.raw === receipt.beforeOwnershipRaw;
+    const interruptedRestoreTarget =
+      tree.digest === receipt.beforeDigest &&
+      ownership.raw === receipt.afterOwnershipRaw &&
+      receipt.restore !== undefined &&
+      [
+        "target-restoring",
+        "target-restored",
+        "ownership-restoring",
+        "ownership-restored",
+        "partial",
+      ].includes(receipt.restore.phase);
+    recoverableRestoreState = interruptedRestoreTarget;
+    if (
+      !isManagedResult &&
+      !isUnownedInterruptedResult &&
+      !alreadyRestored &&
+      !interruptedRestoreTarget
+    )
+      fail(
+        "RESOURCE_RESTORE_TARGET_CHANGED",
+        "Current target does not match a recorded replacement state; external content is preserved.",
+        {
+          target: receipt.target,
+          observedDigest: tree.digest,
+          expectedSourceDigest: receipt.sourceDigest,
+          expectedBeforeDigest: receipt.beforeDigest,
+        },
+      );
+  } else if (targetState.kind !== "missing") {
+    fail(
+      "RESOURCE_RESTORE_TARGET_CHANGED",
+      `Current target is unsafe for restoration: ${targetState.kind}`,
+    );
+  }
+  const alreadyRestored =
+    currentTargetDigest === receipt.beforeDigest &&
+    ownership.raw === receipt.beforeOwnershipRaw;
+  const rollbackState = await stateAt(root, receipt.rollbackPath);
+  const replacementMovePhase = [
+    "target-moving-original",
+    "target-original-moved",
+    "target-installing",
+  ].includes(receipt.phase);
+  const replacementOriginalRollback =
+    targetState.kind === "missing" &&
+    replacementMovePhase &&
+    ownership.raw === receipt.beforeOwnershipRaw &&
+    rollbackState.kind === "directory"
+      ? await replacementTree(rollbackState.absolute)
+      : null;
+  const recoveringReplacementOriginal = replacementOriginalRollback !== null;
+  if (
+    recoveringReplacementOriginal &&
+    replacementOriginalRollback.digest !== receipt.beforeDigest
+  )
+    fail(
+      "RESOURCE_RESTORE_ROLLBACK_CHANGED",
+      "Replacement rollback tree does not match the recorded original target.",
+    );
+  const restoreRollbackState = receipt.restore
+    ? await stateAt(root, receipt.restore.rollbackPath)
+    : null;
+  const interruptedRestore = Boolean(
+    receipt.restore &&
+      [
+        "target-moving",
+        "target-moved",
+        "target-restoring",
+        "target-restored",
+        "ownership-restoring",
+        "ownership-restored",
+        "partial",
+      ].includes(receipt.restore.phase),
+  );
+  const recoveryRollback =
+    targetState.kind === "missing" &&
+    interruptedRestore &&
+    restoreRollbackState?.kind === "directory"
+      ? restoreRollbackState
+      : null;
+  const recoveryRollbackDigest =
+    recoveryRollback?.kind === "directory"
+      ? await digestTree(recoveryRollback.absolute)
+      : null;
+  const expectedRollbackDigest =
+    interruptedRestore &&
+    receipt.restore &&
+    [
+      "target-moving",
+      "target-moved",
+      "target-restoring",
+      "target-restored",
+      "ownership-restoring",
+      "ownership-restored",
+      "partial",
+    ].includes(receipt.restore.phase)
+      ? receipt.sourceDigest
+      : receipt.beforeDigest;
+  if (
+    targetState.kind === "missing" &&
+    recoveryRollback?.kind !== "directory" &&
+    !recoveringReplacementOriginal
+  )
+    fail(
+      "RESOURCE_RESTORE_TARGET_CHANGED",
+      "Target is missing without the receipt-recorded original rollback tree; external deletion is preserved.",
+    );
+  if (
+    targetState.kind === "missing" &&
+    recoveryRollbackDigest !== expectedRollbackDigest &&
+    !recoveringReplacementOriginal
+  )
+    fail(
+      "RESOURCE_RESTORE_ROLLBACK_CHANGED",
+      "Recorded rollback tree does not match a transaction-owned state.",
+    );
+  if (receipt.restore && receipt.restore.phase !== "complete") {
+    const restoreStage = await stateAt(root, receipt.restore.stagePath);
+    if (
+      restoreStage.kind === "directory" &&
+      (await digestTree(restoreStage.absolute)) !== receipt.beforeDigest
+    )
+      fail(
+        "RESOURCE_RESTORE_STAGE_CHANGED",
+        "Interrupted restore stage differs from verified backup.",
+      );
+  }
+  const [backupFinal, targetFinal, currentParent] = await Promise.all([
+    replacementTree(backupState.absolute),
+    targetState.kind === "directory"
+      ? replacementTree(targetState.absolute)
+      : Promise.resolve(null),
+    stateAt(root, path.posix.dirname(receipt.target)),
+  ]);
+  if (
+    backupFinal.digest !== backupTree.digest ||
+    backupFinal.identity !== backupTree.identity ||
+    (targetSnapshot &&
+      (!targetFinal ||
+        targetFinal.digest !== targetSnapshot.digest ||
+        targetFinal.identity !== targetSnapshot.identity)) ||
+    currentParent.kind !== "directory" ||
+    directoryIdentity(await lstat(currentParent.absolute)) !==
+      targetParentIdentity
+  )
+    fail(
+      "RESOURCE_STALE",
+      "Restore target, backup, or parent changed during preview.",
+    );
+  if (targetState.kind === "missing" || recoverableRestoreState) {
+    const staged = receipt.restore
+      ? await stateAt(root, receipt.restore.stagePath)
+      : null;
+    if (
+      staged?.kind === "directory" &&
+      (await digestTree(staged.absolute)) !== receipt.beforeDigest
+    )
+      fail(
+        "RESOURCE_RESTORE_STAGE_CHANGED",
+        "Interrupted restore stage differs from verified backup.",
+      );
+  }
+  const restoreCompleted =
+    receipt.restore?.phase === "complete" && alreadyRestored;
+  const binding = {
+    kind: "skill-restore" as const,
+    projectRoot: root,
+    backupId,
+    target: receipt.target,
+    skill: receipt.source.skill,
+    receiptDigest: sha256(raw),
+    currentTargetDigest,
+    currentTargetIdentity,
+    targetParentIdentity,
+    ownershipRaw: ownership.raw,
+    pinGuard,
+    aliases,
+    backupDigest,
+    alreadyRestored,
+    recoveringReplacementOriginal,
+    recoveryRollbackDigest: replacementOriginalRollback?.digest ?? null,
+    recoveryRollbackIdentity: replacementOriginalRollback?.identity ?? null,
+  };
+  const token = inputDigest(binding);
+  return freeze({
+    ...binding,
+    version: 1,
+    canApply: !restoreCompleted,
+    ...(restoreCompleted
+      ? {
+          refusal:
+            "Target and ownership already match the recorded pre-replacement state.",
+        }
+      : {}),
+    inputDigest: token,
+    token,
+    freshness: { status: "current", digest: token },
+  });
+}
+
+/** Restore verified backup only when target, ownership, receipt, and complete pin guard remain exact. */
+export async function applySkillRestore(
+  plan: SkillRestorePlan,
+  suppliedToken: string,
+  options: ResourceRuntimeOptions = {},
+): Promise<SkillReplacementInspection> {
+  if (plan.kind !== "skill-restore" || plan.version !== 1)
+    fail("RESOURCE_PLAN_INVALID", "Unsupported skill restore plan.");
+  if (suppliedToken !== plan.token || plan.inputDigest !== plan.token)
+    fail(
+      "RESOURCE_STALE",
+      "Skill restore token does not match the reviewed preview.",
+    );
+  return withReplacementMutationLocks(plan.projectRoot, async () => {
+    const locked = await previewSkillRestore(
+      plan.projectRoot,
+      plan.backupId,
+      options,
+    );
+    if (locked.token !== plan.token)
+      fail("RESOURCE_STALE", "Restore inputs changed after preview.");
+    plan = locked;
+    if (!locked.canApply)
+      fail(
+        "RESOURCE_RESTORE_NOT_NEEDED",
+        locked.refusal ?? "Restore is not applicable.",
+      );
+    const root = plan.projectRoot;
+    const { receipt: originalReceipt, raw } = await readReplacementReceipt(
+      root,
+      plan.backupId,
+    );
+    const backup = path.join(root, ...originalReceipt.backupPath.split("/"));
+    const target = path.join(root, ...originalReceipt.target.split("/"));
+    const parent = path.dirname(target);
+    const nonce = randomUUID();
+    const priorRestore =
+      originalReceipt.restore?.phase !== "complete" &&
+      plan.receiptDigest === sha256(raw)
+        ? originalReceipt.restore
+        : undefined;
+    const stagePath =
+      priorRestore?.stagePath ??
+      path.posix.join(
+        path.posix.dirname(originalReceipt.target),
+        `.opsx-restore-${plan.backupId}-${nonce}.stage`,
+      );
+    const rollbackPath =
+      priorRestore?.rollbackPath ??
+      path.posix.join(
+        path.posix.dirname(originalReceipt.target),
+        `.opsx-restore-rollback-${plan.backupId}-${nonce}.current`,
+      );
+    let receipt: SkillReplacementReceipt = {
+      ...originalReceipt,
+      restore: {
+        phase:
+          priorRestore &&
+          [
+            "target-restored",
+            "ownership-restoring",
+            "ownership-restored",
+            "partial",
+          ].includes(priorRestore.phase)
+            ? priorRestore.phase
+            : "intent",
+        stagePath,
+        rollbackPath,
+      },
+    };
+    let receiptRaw = await persistReplacementReceipt(
+      root,
+      plan.backupId,
+      receipt,
+      raw,
+    );
+    const update = async (next: SkillReplacementReceipt) => {
+      receiptRaw = await persistReplacementReceipt(
+        root,
+        plan.backupId,
+        next,
+        receiptRaw,
+      );
+      receipt = next;
+    };
+    try {
+      const assertParent = async () => {
+        const state = await stateAt(
+          root,
+          path.posix.dirname(originalReceipt.target),
+        );
+        if (
+          state.kind !== "directory" ||
+          directoryIdentity(await lstat(state.absolute)) !==
+            plan.targetParentIdentity
+        )
+          fail(
+            "RESOURCE_STALE",
+            "Restore target parent changed after preview.",
+          );
+      };
+      await assertParent();
+      if (plan.recoveringReplacementOriginal) {
+        const [current, ownership, pins, rollbackState] = await Promise.all([
+          stateAt(root, originalReceipt.target),
+          readOwnership(root),
+          requiredSkillTargets(root, options),
+          stateAt(root, originalReceipt.rollbackPath),
+        ]);
+        if (
+          current.kind !== "missing" ||
+          ownership.raw !== originalReceipt.beforeOwnershipRaw ||
+          !pins.complete ||
+          pins.digest !== plan.pinGuard.digest ||
+          pins.targets.some((targetPath) =>
+            plan.aliases.some((alias) => alias.target === targetPath),
+          ) ||
+          rollbackState.kind !== "directory"
+        )
+          fail(
+            "RESOURCE_STALE",
+            "Replacement rollback recovery state changed after preview.",
+          );
+        await assertRestoreAliasesCurrent(plan, options);
+        const rollbackTree = await replacementTree(rollbackState.absolute);
+        if (
+          rollbackTree.digest !== originalReceipt.beforeDigest ||
+          rollbackTree.digest !== plan.recoveryRollbackDigest ||
+          rollbackTree.identity !== plan.recoveryRollbackIdentity
+        )
+          fail(
+            "RESOURCE_RESTORE_ROLLBACK_CHANGED",
+            "Replacement rollback tree changed after preview.",
+          );
+        const replacementStageState = await stateAt(
+          root,
+          originalReceipt.stagePath,
+        );
+        if (replacementStageState.kind === "directory") {
+          if (
+            (await digestTree(replacementStageState.absolute)) !==
+            originalReceipt.sourceDigest
+          )
+            fail(
+              "RESOURCE_RESTORE_STAGE_CHANGED",
+              "Interrupted replacement stage differs from recorded source.",
+            );
+        } else if (replacementStageState.kind !== "missing") {
+          fail(
+            "RESOURCE_RESTORE_STAGE_CHANGED",
+            "Interrupted replacement stage is not a real directory.",
+          );
+        }
+        await assertParent();
+        await update({
+          ...receipt,
+          restore: { phase: "target-restoring", stagePath, rollbackPath },
+        });
+        if (await lstatOrNull(target))
+          fail("RESOURCE_STALE", "A target appeared during restore recovery.");
+        if (replacementStageState.kind === "directory") {
+          await rm(replacementStageState.absolute, { recursive: true });
+          await syncDirectory(parent);
+        }
+        if (await lstatOrNull(target))
+          fail("RESOURCE_STALE", "A target appeared during restore recovery.");
+        await rename(rollbackState.absolute, target);
+        await syncDirectory(parent);
+        const [restoredTree, finalOwnership] = await Promise.all([
+          replacementTree(target),
+          readOwnership(root),
+        ]);
+        if (
+          restoredTree.digest !== originalReceipt.beforeDigest ||
+          finalOwnership.raw !== originalReceipt.beforeOwnershipRaw
+        )
+          fail(
+            "RESOURCE_PARTIAL",
+            "Recovered original target or ownership differs from the reviewed state.",
+          );
+        await update({
+          ...receipt,
+          restore: { phase: "complete", stagePath, rollbackPath },
+        });
+        return inspectSkillReplacement(root, plan.backupId);
+      }
+      const stage = path.join(root, ...stagePath.split("/"));
+      const targetAlreadyRestoredByDigest =
+        plan.currentTargetDigest === originalReceipt.beforeDigest;
+      const existingStage = await lstatOrNull(stage);
+      if (existingStage) {
+        if (
+          existingStage.isSymbolicLink() ||
+          !existingStage.isDirectory() ||
+          (await digestTree(stage)) !== originalReceipt.beforeDigest
+        )
+          fail(
+            "RESOURCE_RESTORE_STAGE_CHANGED",
+            "Interrupted restore stage differs from verified backup.",
+          );
+      } else if (plan.alreadyRestored || targetAlreadyRestoredByDigest) {
+        // Ownership is already restored; finalize the durable receipt without replacing target again.
+      } else {
+        await copyReplacementTree(backup, stage);
+      }
+      if (await lstatOrNull(stage)) {
+        if ((await digestTree(stage)) !== originalReceipt.beforeDigest)
+          fail(
+            "RESOURCE_BACKUP_CORRUPT",
+            "Staged restore does not match verified backup.",
+          );
+      }
+      await update({
+        ...receipt,
+        restore: { phase: "stage-ready", stagePath, rollbackPath },
+      });
+      await assertParent();
+      const current = await stateAt(root, originalReceipt.target);
+      const ownership = await readOwnership(root);
+      const pins = await requiredSkillTargets(root, options);
+      if (
+        !pins.complete ||
+        pins.digest !== plan.pinGuard.digest ||
+        pins.targets.some((targetPath) =>
+          plan.aliases.some((alias) => alias.target === targetPath),
+        ) ||
+        ownership.raw !== plan.ownershipRaw ||
+        (current.kind === "directory" &&
+          (await digestTree(current.absolute)) !== plan.currentTargetDigest) ||
+        (current.kind !== "directory" && current.kind !== "missing")
+      )
+        fail(
+          "RESOURCE_STALE",
+          "Target, ownership, or active pin changed before restore swap.",
+        );
+      await assertRestoreAliasesCurrent(plan, options);
+      const targetAlreadyRestored =
+        current.kind === "directory" &&
+        (await digestTree(current.absolute)) === originalReceipt.beforeDigest;
+      if (plan.alreadyRestored) {
+        await update({
+          ...receipt,
+          restore: { phase: "complete", stagePath, rollbackPath },
+        });
+        return inspectSkillReplacement(root, plan.backupId);
+      }
+      if (current.kind === "directory" && !targetAlreadyRestored) {
+        const rollback = path.join(root, ...rollbackPath.split("/"));
+        const existingRollback = await lstatOrNull(rollback);
+        if (existingRollback) {
+          if (
+            existingRollback.isSymbolicLink() ||
+            !existingRollback.isDirectory() ||
+            (await digestTree(rollback)) !== originalReceipt.sourceDigest
+          )
+            fail(
+              "RESOURCE_RESTORE_ROLLBACK_CHANGED",
+              `Restore rollback path is not transaction-owned: ${rollbackPath}`,
+            );
+        } else {
+          await assertParent();
+          await update({
+            ...receipt,
+            restore: { phase: "target-moving", stagePath, rollbackPath },
+          });
+          await rename(target, rollback);
+          await syncDirectory(parent);
+        }
+        await update({
+          ...receipt,
+          restore: { phase: "target-moved", stagePath, rollbackPath },
+        });
+      }
+      const latestTarget = await lstatOrNull(target);
+      if (targetAlreadyRestored) {
+        if ((await digestTree(target)) !== originalReceipt.beforeDigest)
+          fail(
+            "RESOURCE_STALE",
+            "Restored target changed before receipt completion.",
+          );
+      } else if (latestTarget) {
+        fail("RESOURCE_STALE", "A target appeared during restore swap.");
+      }
+      const pinsBeforeInstall = await requiredSkillTargets(root, options);
+      if (
+        !pinsBeforeInstall.complete ||
+        pinsBeforeInstall.digest !== plan.pinGuard.digest ||
+        pinsBeforeInstall.targets.some((targetPath) =>
+          plan.aliases.some((alias) => alias.target === targetPath),
+        )
+      )
+        fail(
+          "RESOURCE_STALE",
+          "Active pin state changed before restore installation.",
+          pinsBeforeInstall.diagnostics,
+        );
+      await assertRestoreAliasesCurrent(plan, options);
+      if (!targetAlreadyRestored) {
+        await assertParent();
+        await update({
+          ...receipt,
+          restore: { phase: "target-restoring", stagePath, rollbackPath },
+        });
+        await rename(stage, target);
+        await syncDirectory(parent);
+      }
+      if ((await digestTree(target)) !== originalReceipt.beforeDigest)
+        fail(
+          "RESOURCE_PARTIAL",
+          "Restored target differs from verified backup.",
+        );
+      await update({
+        ...receipt,
+        restore: { phase: "target-restored", stagePath, rollbackPath },
+      });
+      const [pinsBeforeOwnership, restoredTarget, currentOwnership] =
+        await Promise.all([
+          requiredSkillTargets(root, options),
+          digestTree(target),
+          readOwnership(root),
+        ]);
+      if (
+        !pinsBeforeOwnership.complete ||
+        pinsBeforeOwnership.digest !== plan.pinGuard.digest ||
+        pinsBeforeOwnership.targets.some((targetPath) =>
+          plan.aliases.some((alias) => alias.target === targetPath),
+        ) ||
+        restoredTarget !== originalReceipt.beforeDigest ||
+        currentOwnership.raw !== plan.ownershipRaw
+      )
+        fail(
+          "RESOURCE_STALE",
+          "Restore state changed before ownership restoration.",
+          pinsBeforeOwnership.diagnostics,
+        );
+      await assertRestoreAliasesCurrent(plan, options);
+      await update({
+        ...receipt,
+        restore: { phase: "ownership-restoring", stagePath, rollbackPath },
+      });
+      await replaceOwnershipRaw(
+        root,
+        originalReceipt.beforeOwnershipRaw,
+        plan.ownershipRaw,
+      );
+      await update({
+        ...receipt,
+        restore: { phase: "ownership-restored", stagePath, rollbackPath },
+      });
+      await update({
+        ...receipt,
+        restore: { phase: "complete", stagePath, rollbackPath },
+      });
+      return inspectSkillReplacement(root, plan.backupId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        const observed = await readOwnership(root);
+        const currentTarget = await stateAt(root, originalReceipt.target);
+        const targetMatchesBackup =
+          currentTarget.kind === "directory" &&
+          (await digestTree(currentTarget.absolute)) ===
+            originalReceipt.beforeDigest;
+        await update({
+          ...receipt,
+          restore: {
+            phase:
+              targetMatchesBackup &&
+              observed.raw === originalReceipt.beforeOwnershipRaw
+                ? "ownership-restored"
+                : "partial",
+            stagePath,
+            rollbackPath,
+            error: message,
+          },
+        });
+      } catch {
+        // Existing receipt and all candidate trees remain available for manual inspection.
+      }
+      fail(
+        "RESOURCE_PARTIAL",
+        "Restore stopped in a recoverable partial state; inspect receipt before further changes.",
+        {
+          backupId: plan.backupId,
+          target: originalReceipt.target,
+          backup,
+          receipt: replacementPaths(root, plan.backupId).receipt,
+          stage: stagePath,
+          rollback: rollbackPath,
+          error: message,
+        },
+      );
+    }
+  });
 }

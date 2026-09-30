@@ -57,6 +57,45 @@ The CLI SHALL let a caller inspect an already installed bundled schema and previ
 - **WHEN** the bundle source or destination changes before Apply
 - **THEN** Apply refuses with a stale-plan diagnostic and no installed schema or default is changed.
 
+### Requirement: Declared-bundle diagnostics and pre-install discovery
+The CLI SHALL distinguish an undeclared skill bundle from an undeclared named agent profile. Bundle-selection errors MUST identify the selected schema and its actually declared tiers, indicate when `default` contains all declared skills, and leave selection unchanged; CLI JSON errors and blocked previews SHALL remain nonzero. Read-only skill inspection SHALL continue to report available and unavailable tiers without treating a requested unavailable tier as install authorization. When a known bundled schema is not yet resolvable as a project schema, project-scoped skill inspection SHALL identify bundled discovery and the guarded named install path without silently inspecting a same-name bundled source or masking unrelated OpenSpec failures.
+
+#### Scenario: Bundle and named-profile errors are distinct
+- **GIVEN** `compound-intent-driven` declares 11 skills in `default` and does not declare `recommended` or `all`
+- **WHEN** a caller inspects tiers or attempts to install `all`, and separately supplies an unknown named profile
+- **THEN** inspection reports the actual tier availability, bundle refusal names the available tier without substituting it, and the unknown profile retains its named-profile diagnostic.
+
+#### Scenario: Missing project schema is a bundled catalog entry
+- **GIVEN** a project lacks a schema name that exists in the bundled catalog
+- **WHEN** project-scoped `skills inspect` requests that name
+- **THEN** the nonzero result retains project-resolution failure and gives bundled discovery and named-install guidance without pretending the bundle is installed.
+
+#### Scenario: Unrelated OpenSpec resolution error
+- **GIVEN** project schema resolution fails for a reason other than a known missing bundled schema name
+- **WHEN** skill inspection runs
+- **THEN** the original resolution failure remains visible without a bundled install suggestion.
+
+### Requirement: Accurate bundled installation grammar and distinct mutation stages
+Help and command documentation SHALL identify the `schemas install` argument as a bundled schema name rather than a filesystem path, use one global `--project` option per invocation, and distinguish schema installation, skill selection/replacement, schema activation, and host command-adapter installation. Each mutation MUST have its own exact preview and fresh apply token; the parser SHALL retain its accepted placement for a single project option and reject duplicate options or filesystem paths as bundled names.
+
+#### Scenario: Catalog name versus source directory
+- **GIVEN** a packaged schema has a catalog name and a source directory
+- **WHEN** a caller installs first by name and then by directory path
+- **THEN** the named request reaches the guarded preview while the path is rejected as a non-name without copying files.
+
+#### Scenario: Separate preview tokens
+- **GIVEN** a caller installs a schema, replaces a skill collision, activates a schema, and installs adapters
+- **WHEN** the caller applies each reviewed operation
+- **THEN** each operation requires its own fresh token and no earlier token authorizes another stage.
+
+### Requirement: Explicit guarded single-skill replacement
+The CLI SHALL expose a separate `skills replace` operation for an exact project-relative unmanaged skill target, with explicit installed schema, declared bundle and unique backup identifier. Replacement SHALL affect only the selected target; it SHALL NOT activate the schema, install unrelated skills or adapters, or loosen normal install/switch collision refusal. Exact receipt inspection SHALL be read-only, and restoration SHALL be a separate preview/token Apply. The command SHALL disclose that active-pin, ownership, containment, freshness and backup safeguards apply and that retained backups are available for recovery.
+
+#### Scenario: Replace one OMP collision before activation
+- **GIVEN** an installed schema's selected OMP bundle has an unmanaged collision
+- **WHEN** a caller previews and applies one exact target replacement
+- **THEN** only that target is replaced after its fresh authorization, its backup can be inspected, other collisions still block full-set activation, and command adapters remain separate.
+
 ### Requirement: CLI creation and reconciliation of pin profile selections
 The CLI SHALL accept or resolve a verified, explicitly recorded named-profile, native skill-host, and skill-bundle selection when creating a change pinned to a schema declaring managed skills; it SHALL persist that per-change association and expose its provenance in diagnostic reads. When no exact selection is available, creation SHALL request an explicit selection or fail safely rather than silently create an apparently healthy unassociated pin. The CLI SHALL expose a guarded, exact-target reconciliation operation for existing unknown pins; it MUST NOT infer historical choices from files that happen to be installed.
 
@@ -87,3 +126,4 @@ The CLI SHALL expose schema workflow-adapter compatibility and installation for 
 - **GIVEN** Pi lacks its required MCP adapter or any host's native config cannot represent the declared transport
 - **WHEN** a caller requests a host/server preview or noninteractive Apply
 - **THEN** the CLI reports the exact missing prerequisite or unsupported transport and refuses mutation rather than returning installed or accepting an unattended approval flag.
+

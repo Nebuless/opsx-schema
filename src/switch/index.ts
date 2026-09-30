@@ -16,6 +16,10 @@ import {
 import path from "node:path";
 import YAML from "yaml";
 import {
+  acquireProjectMutationLock,
+  PROJECT_LOCK_FILE,
+} from "../project-lock.ts";
+import {
   listBundledSchemas,
   prepareBundledSchema,
   installBundledSchema,
@@ -43,11 +47,12 @@ import type {
   ChangeSelectionAssociation,
   Provenance,
 } from "../provenance/index.ts";
-import { previewSchemaHandoff } from "../cli/index.ts";
-import type { SchemaHandoffPreview } from "../cli/index.ts";
+import { previewSchemaHandoff } from "../cli/handoff.ts";
+import type { SchemaHandoffPreview } from "../cli/handoff.ts";
 import { validateChangeAgainst } from "../validation/index.ts";
 import type { ValidationResult } from "../validation/index.ts";
 import {
+  assertSkillBundleDeclared,
   loadAgentProfileDigest,
   loadAgentProfiles,
   loadSkillBundles,
@@ -68,7 +73,6 @@ import type {
 } from "../resources/index.ts";
 
 const JOURNAL_VERSION = 1;
-const LOCK_NAME = ".opsx-switch.lock";
 const JOURNAL_NAME = "switch-journal.json";
 const SELECTION_RECEIPT_NAME = "selection-receipt.json";
 const MAX_GUARDED_FILE_BYTES = 1024 * 1024;
@@ -1268,6 +1272,11 @@ async function installPlan(
     );
   } else {
     try {
+      assertSkillBundleDeclared(
+        await loadSkillBundles(targetSchemaRoot),
+        request.schema,
+        request.skillBundle!,
+      );
       const allProfiles = await loadAgentProfiles(options.profileManifestPath);
       const byId = new Map(allProfiles.map((profile) => [profile.id, profile]));
       selectedProfiles = selectedProfileIds
@@ -1324,6 +1333,7 @@ async function installPlan(
           {
             projectRoot: root,
             schemaRoot: targetSchemaRoot,
+            schemaName: request.schema,
             profiles:
               missingProfiles.length === 0
                 ? selectedProfileIds
@@ -1839,7 +1849,7 @@ function journalPath(root: string): string {
   return path.join(root, "openspec", ".opsx", JOURNAL_NAME);
 }
 function lockPath(root: string): string {
-  return path.join(root, "openspec", LOCK_NAME);
+  return path.join(root, "openspec", PROJECT_LOCK_FILE);
 }
 function resourceOwnershipPath(root: string): string {
   return path.join(root, ".openspec", "opsx-schema", "managed-resources.json");
@@ -2792,7 +2802,7 @@ export async function apply(
       "Apply requires the exact token from a current switch preview.",
     );
   const canonicalRoot = await resolveProject(root, true);
-  const release = await acquireProjectLock(canonicalRoot);
+  const release = await acquireProjectMutationLock(canonicalRoot);
   let released = false;
   const unlock = async () => {
     if (!released) {

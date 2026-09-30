@@ -83,7 +83,7 @@ doctor
 ### OpenSpec lifecycle
 
 ```text
-change create <name> --description <text> [--goal <text>] [--schema <name>] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--apply-token <token>]
+change create <name> --description <text> [--goal <text>] [--schema <name>] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle <declared-tier>] [--apply-token <token>]
 change status <change>
 change instructions <change> <artifact>
 change validate <change>
@@ -98,27 +98,30 @@ OpenSpec remains authoritative for change identity and lifecycle state, schema r
 ### Schema installation, validation and switching
 
 ```text
-schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--migrate <change> ...] [--apply-token <token>]
+schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle <declared-tier>] [--migrate <change> ...] [--apply-token <token>]
 schemas bundled [name]
-schemas install <source-name> --project <root> [--as <distinct-name>] [--apply-token <token>]
+schemas install <bundled-schema-name> --project <root> [--as <distinct-name>] [--apply-token <token>]
 schemas validate [name]
 verify
 ```
 
 - `schemas bundled [name]` lists or inspects packaged schemas and works outside a project.
-- `schemas install` installs a named bundled source into the explicit project. Use `--as` to give a second revision a distinct OpenSpec schema ID; a same-name revision cannot silently replace a pinned schema. The preview identifies both source and destination and refuses unsafe or changed targets. Installation does not switch the project default.
+- `schemas install` installs a named bundled source into the explicit project. The argument is a catalog name, not a filesystem path. Use one `--project <root>` per command. Use `--as` to give a second revision a distinct OpenSpec schema ID; a same-name revision cannot silently replace a pinned schema. The preview identifies both source and destination and refuses unsafe or changed targets. Installation does not switch the project default.
 - `schemas validate [name]` asks OpenSpec to resolve and validate the project schema or a specified schema available to OpenSpec. A bundled schema must be installed before OpenSpec can resolve it by name.
-- `schema switch` changes the project default. Repeated `--profile` options select named agent profiles; repeated `--skill-host` options select separate native skill roots for OpenCode, OMP, Pi, Atomic and Senpi. Select `--bundle` explicitly when installing schema-declared skills. Each proposed target, trust requirement and shared destination appears in the guarded preview. Repeated `--migrate` options select active changes for compatible, validated migration; completed and archived changes are not migration targets. Existing skills are retained; MCP installation is never implicit.
+- `schema switch` changes the project default. Repeated `--profile` options select named agent profiles; repeated `--skill-host` options select separate native skill roots for OpenCode, OMP, Pi, Atomic and Senpi. `--bundle` selects a tier declared by that schema; available tiers vary by schema. For example, `compound-intent-driven` declares 11 skills in `default`, but does not declare `recommended` or `all`. An unavailable tier is refused, never substituted. Each proposed target, trust requirement and shared destination appears in the guarded preview. Repeated `--migrate` options select active changes for compatible, validated migration; completed and archived changes are not migration targets. Existing skills are retained; MCP installation is never implicit.
 - `change create` records the exact schema revision, named profiles, native skill hosts and bundle in the change receipt. It uses an explicitly supplied selection or a matching verified switch selection; it does not guess installed hosts from files. For a schema declaring skills, absent or unverified selection blocks creation. A schema without declared skills can be created without host selection.
-- `verify` runs the aggregate OpenSpec-schema, active-change, skill and MCP checks. It is a new aggregate command, not a byte-for-byte alias for every legacy verifier.
+- `verify` runs aggregate OpenSpec-schema, active-change, skill and MCP checks. It identifies the failing component and change. Unknown historical creation provenance remains a blocking failure even when current schema, skill and MCP checks pass; it is not evidence that a new installation is corrupt. Current-schema validation does not prove a change's historical creation revision. Inspect command adapters separately with `adapters inspect`; adapter state is not implied by `verify` or skill installation. `skills reconcile` can record an explicitly reviewed exact current revision and selection when evidence permits, but does not invent creation history; `created: null` / Unknown history stays unknown. A missing or drifted revision or unproven selection still blocks reconciliation.
 
 ### Named profiles and skills
 
 ```text
-skills inspect [schema] [--bundle default|recommended|all]
+skills inspect [schema] [--bundle <declared-tier>]
 skills doctor
-skills reconcile <change> --revision-digest <sha256> --bundle default|recommended|all [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--apply-token <token>]
-skills install [schema] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--apply-token <token>]
+skills reconcile <change> --revision-digest <sha256> --bundle <declared-tier> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--apply-token <token>]
+skills install [schema] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle <declared-tier>] [--apply-token <token>]
+skills replace <project-relative-target> --schema <installed-name> --bundle <declared-tier> --backup-id <unique-id> [--apply-token <token>]
+skills replace inspect <backup-id>
+skills restore <backup-id> [--apply-token <token>]
 skills disable <project-relative-target> [--apply-token <token>]
 ```
 
@@ -132,11 +135,31 @@ The shipped `opsx-schema.json` manifest defines these profile IDs and skill root
 | `gemini-cli` | Gemini CLI | `.gemini/skills` |
 | `opencode` | OpenCode | `.agents/skills` |
 
-The CLI uses the profile manifest shipped with the package and rejects IDs that are not declared there. Native skill hosts are a separate selection: OpenCode `.opencode/skills`, OMP `.omp/skills`, Pi `.pi/skills`, Atomic `.atomic/skills`, and Senpi `.senpi/skills`. `default`, `recommended` and `all` are schema-declared skill bundles, not agent profiles or host checkboxes. Codex and the named OpenCode profile share `.agents/skills`; a native OpenCode host does not share that root. Shared writes are deduplicated and identified in previews. Skill disable is a separate guarded action; it refuses unsafe, modified, shared or currently pinned resources rather than force-removing them. A legacy active pin whose exact profile/bundle/host association cannot be proven leaves disable blocked; do not infer targets from installed files or project defaults.
+The CLI uses the profile manifest shipped with the package and rejects IDs that are not declared there. Native skill hosts are a separate selection: OpenCode `.opencode/skills`, OMP `.omp/skills`, Pi `.pi/skills`, Atomic `.atomic/skills`, and Senpi `.senpi/skills`. `default`, `recommended` and `all` are possible schema-declared skill tiers, not agent profiles or host checkboxes; each schema exposes only tiers it declares. `skills inspect` lists available tiers and their declaration counts. For example, `compound-intent-driven` has 11 skills in `default` and no `recommended` or `all` tier. An invalid bundle is not replaced with another tier; a bundle diagnostic names the selected schema and its actually available tiers. Profile errors remain distinct. Codex and the named OpenCode profile share `.agents/skills`; a native OpenCode host does not share that root. Shared writes are deduplicated and identified in previews. Skill disable is a separate guarded action; it refuses unsafe, modified, shared or currently pinned resources rather than force-removing them. A legacy active pin whose exact profile/bundle/host association cannot be proven is treated as required/unknown, not safe to delete.
 
 To reconcile a pre-existing active change without a recorded selection, inspect its schema pin and choose the exact effective revision SHA-256, named profile(s), native host(s), and bundle. `skills reconcile` previews that exact change, revision, and selection, then requires its matching apply token. It records the reviewed association without inventing the historical creation revision; a no-skills selection is valid only when the schema declares no skills. A stale pin, changed manifest, conflicting association or unknown selection fails closed. Re-run `skills doctor` and inspect `changes <name>` after Apply. Reconciliation does not install skills or providers.
 
-There is no `skills enable` alias. Use `skills install` with explicit profile(s) and/or native host(s) and the desired bundle. A schema switch does not disable previously installed skills.
+There is no `skills enable` alias. Use `skills install` with explicit profile(s) and/or native host(s) and a tier declared by the selected schema. A schema switch does not disable previously installed skills. If project-scoped `skills inspect` names a schema that OpenSpec cannot resolve but the same name is in the bundled catalog, it gives bundled-catalog and named-install guidance; it does not inspect bundled content as if it were installed. Other OpenSpec resolution errors remain visible as-is.
+
+Normal `skills install` and `schema switch` continue refusing unmanaged skill collisions. To replace one existing unmanaged skill, identify the exact project-relative skill directory and declared bundle source, then preview one replacement at a time. Replacement does not activate the schema, install other skills, or install adapters. Even byte-identical unowned files require explicit review; modified managed skills and unsafe or ambiguous targets are refused. Use a unique backup ID for each replacement:
+
+```sh
+opsx-schema skills replace .omp/skills/<skill-name> --schema compound-intent-driven --bundle default --backup-id omp-collision-1
+# Review exact target, source, shared aliases, diff, digests and backup; use this preview's fresh token:
+opsx-schema skills replace .omp/skills/<skill-name> --schema compound-intent-driven --bundle default --backup-id omp-collision-1 --apply-token <token-from-this-replacement-preview>
+opsx-schema skills replace inspect omp-collision-1
+```
+
+Repeat replacement with a new backup ID and fresh token for each other collision. Inspecting a backup is read-only. To restore a replacement, preview the separate restore operation, then apply with that restore preview's own token:
+
+```sh
+opsx-schema skills restore omp-collision-1
+opsx-schema skills restore omp-collision-1 --apply-token <token-from-this-restore-preview>
+```
+
+Replacement binds its preview to the declared source, target, ownership, backup identifier and active-pin guard. Restoration checks receipt, backup bytes, current target, ownership and active-pin safety. Both retain backup and receipt evidence and refuse stale state, incomplete pin knowledge or a target currently required by an active change. Opsx locks serialize its own mutations; standalone OpenSpec commands and external editors do not share those locks, so the CLI rechecks authoritative state at write boundaries but cannot claim atomic exclusion from non-cooperating writers. After resolving selected collisions, run a fresh full-set `schema switch` preview and Apply with that switch preview's token. Never reuse a token between replacement, restore, skill install, schema switch, adapter install, or any other mutation.
+
+For the complete OMP sequence, fresh-token examples, separate adapter checks, and native discovery caveat, see [Resolve OMP skill collisions safely](./workflows.md#resolve-omp-skill-collisions-safely).
 
 `skills inspect` reads the bundled schema declarations and the package's local profile manifest; it is a read-only catalog and does not fetch GitHub skill repositories. `skills install` may fetch schema-declared external GitHub skill repository content while preparing its preview. The schema's `skills.txt` catalog and packaged host assets do not imply that all external skill payloads are bundled or installed offline.
 
@@ -211,12 +234,12 @@ This matrix maps legacy command capabilities to the new command grammar; it is n
 | --- | --- | --- |
 | `openspec-schemas list`, `opsx-schema list` | `schemas [name]`; `schemas bundled [name]` | Use `bundled` for the packaged catalog outside a project. |
 | `openspec-schemas validate [schema]` | `schemas validate [name]` | Uses OpenSpec validation, not a second schema validator. |
-| `openspec-schemas install <schema> [--target/--skills/--activate/--force]`; `opsx-schema enable <schema>` | `schemas install <source> --project <root> [--as <distinct-name>]`; optional skills via `skills install [schema] --profile <agent-id> ...` or `--skill-host <host> ...`; select the project default with `schema switch <name>` | `--target` maps to explicit `--project`; choose exact named profile/native-host destinations rather than an implicit all-host target. `--as` preserves a separate installed schema ID; activation remains separate. Legacy `--force` is not carried forward. |
+| `openspec-schemas install <schema> [--target/--skills/--activate/--force]`; `opsx-schema enable <schema>` | `schemas install <bundled-schema-name> --project <root> [--as <distinct-name>]`; optional skills via `skills install [schema] --profile <agent-id> ...` or `--skill-host <host> ...`; select the project default with `schema switch <name>` | `--target` maps to explicit `--project`; choose exact named profile/native-host destinations rather than an implicit all-host target. `--as` preserves a separate installed schema ID; activation remains separate. Legacy `--force` is not carried forward. |
 | `opsx-schema inspect [--change]`, list/state reads | `status`, `changes`, `archive`, `schemas`, `resources` | Choose the read family that owns the fact; archived records are separate from active changes. |
 | Skill-host selection during schema switch | `schema switch <name> --skill-host <host> ...` (OpenCode, OMP, Pi, Atomic, Senpi) | Repeat the option for multiple independent native roots; review target and trust information before Apply. |
 | `opsx-schema doctor`; `skills doctor` | `doctor`; `skills doctor`; `verify` | Project/resource diagnostics and aggregate checks have explicit new commands. |
 | `openspec-schemas verify` | `verify` and, for a named schema, `schemas validate <name>` | New `verify` reports its documented OpenSpec-schema, active-change, skill and MCP checks; it is not a guarantee of identical legacy internals. |
-| `opsx-schema skills inspect/doctor/install/enable/disable` | `skills inspect/doctor/install/disable` | The `--bundle` accepts `default`, `recommended` or `all`; repeated `--profile` and `--skill-host` select distinct named-agent and native destinations. No `enable` alias. |
+| `opsx-schema skills inspect/doctor/install/enable/disable` | `skills inspect/doctor/install/disable`, plus explicit `skills replace`, `skills replace inspect` and `skills restore` recovery operations | A bundle argument selects only a tier declared by the schema; `default`, `recommended` and `all` are possible names, not universal tiers. Repeated `--profile` and `--skill-host` select distinct named-agent and native destinations. No `enable` alias. |
 | Legacy `--mcp` selector (`all` or comma-separated provider names) plus overloaded `--agents <host>` | `mcp list/inspect/install <provider> --host <host>` | Inspect and preview explicitly; install one named provider at a time. No implicit schema-install MCP option or `--mcp all` shortcut. |
 | `set-change-schema` / metadata-only `handoff` | `change schema <change> <schema>` | Change pin handoff is separate from `schema switch` (project default); no `--allow-incompatible` bypass. |
 | Optional `opsx-schema view` | Bare `opsx-schema` in a usable TTY | React OpenTUI Overview/Changes/Archive/Settings dashboard; non-Settings tabs are read-only. |

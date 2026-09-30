@@ -49,7 +49,6 @@ opentui-stdin*.bin
 /benchmarks/
 /scripts/
 /wiki/
-/AGENTS.md
 /.pre-commit-config.yaml
 /skills-lock.json
 /.worktrees/

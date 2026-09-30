@@ -15,6 +15,7 @@ import path from "node:path";
 import {
   applySkillDisable,
   applySkillInstall,
+  assertSkillBundleDeclared,
   doctorSkills,
   discoverSkillInstallHosts,
   isSkillInstallHostId,
@@ -273,10 +274,26 @@ test("skill bundles inherit source declarations and remain distinct from named a
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test("an undeclared recommended bundle is not aliased to the default manifest", async () => {
+test("an undeclared recommended bundle keeps bundle diagnostics separate from profile errors", async () => {
   const f = await fixture("base-skill\n");
   const catalog = await loadSkillBundles(f.schemaRoot);
   expect(catalog.bundles).toEqual(["default"]);
+  let bundleError: unknown;
+  try {
+    assertSkillBundleDeclared(catalog, "fixture-schema", "recommended");
+  } catch (error) {
+    bundleError = error;
+  }
+  expect(bundleError).toMatchObject({
+    code: "SKILL_BUNDLE_UNDECLARED",
+    message: expect.stringContaining("Declared tiers: default"),
+    details: {
+      schema: "fixture-schema",
+      requestedBundle: "recommended",
+      declaredTiers: ["default"],
+      defaultContainsAllDeclaredSkills: true,
+    },
+  });
   await expect(
     previewSkillInstall(
       {
@@ -284,6 +301,17 @@ test("an undeclared recommended bundle is not aliased to the default manifest", 
         schemaRoot: f.schemaRoot,
         profiles: ["codex"],
         skillBundle: "recommended",
+      },
+      f.options,
+    ),
+  ).rejects.toMatchObject({ code: "SKILL_BUNDLE_UNDECLARED" });
+  await expect(
+    previewSkillInstall(
+      {
+        projectRoot: f.projectRoot,
+        schemaRoot: f.schemaRoot,
+        profiles: ["unknown-agent"],
+        skillBundle: "default",
       },
       f.options,
     ),

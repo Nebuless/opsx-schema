@@ -19,10 +19,6 @@ import { resolveRevision } from "../../src/revisions/index.ts";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
 
 const cli = fileURLToPath(new URL("../../src/domain/cli.ts", import.meta.url));
-const repository = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../..",
-);
 const schemaResources = path.resolve(import.meta.dir, "../../resources");
 const fixtures: string[] = [];
 
@@ -101,11 +97,12 @@ test("older OpenSpec refuses schema installation and switch without writes or a 
   ).toBe(false);
 });
 
-test("status JSON and default TOON retain the resolved project snapshot", () => {
-  const json = invoke(
-    ["--project", repository, "status", "--json"],
-    repository,
-  );
+test("status JSON and default TOON retain the resolved project snapshot", async () => {
+  const root = await fixture();
+  const change = path.join(root, "openspec", "changes", "snapshot-fixture");
+  await mkdir(change);
+  await writeFile(path.join(change, ".openspec.yaml"), "schema: spec-driven\n");
+  const json = invoke(["--project", root, "status", "--json"], root);
   expect(json.code).toBe(0);
   const parsed = JSON.parse(json.stdout) as {
     schemaVersion: number;
@@ -116,15 +113,17 @@ test("status JSON and default TOON retain the resolved project snapshot", () => 
   expect(parsed.schemaVersion).toBe(1);
   expect(parsed.command).toBe("status");
   expect(parsed.ok).toBe(true);
-  expect(parsed.data.root).toBe(repository);
-  expect(Array.isArray(parsed.data.changes)).toBe(true);
-  expect(Array.isArray(parsed.data.archive)).toBe(true);
+  expect(parsed.data.root).toBe(root);
+  expect(parsed.data.changes).toEqual([
+    expect.objectContaining({ name: "snapshot-fixture" }),
+  ]);
+  expect(parsed.data.archive).toEqual([]);
 
-  const toon = invoke(["--project", repository, "status"], repository);
+  const toon = invoke(["--project", root, "status"], root);
   expect(toon.code).toBe(0);
   const decoded = decode(toon.stdout) as typeof parsed;
   expect(decoded.schemaVersion).toBe(1);
-  expect(decoded.data.root).toBe(repository);
+  expect(decoded.data.root).toBe(root);
   expect(decoded.data.changes).toEqual(parsed.data.changes);
 });
 
@@ -150,6 +149,395 @@ test("bundled schema catalog is available outside a project in both output modes
   expect(decoded.data.map((item) => item.name)).toEqual(
     parsed.data.map((item) => item.name),
   );
+});
+
+test("bundle refusal reports real tiers while default switch preview keeps all 11 compound skills", async () => {
+  const root = await fixture();
+  const schema = "compound-intent-driven";
+  const schemaInstall = invoke(
+    ["--project", root, "schemas", "install", schema, "--json"],
+    root,
+  );
+  expect(schemaInstall.code).toBe(0);
+  const schemaToken = JSON.parse(schemaInstall.stdout).data.confirmation
+    .token as string;
+  expect(
+    invoke(
+      [
+        "--project",
+        root,
+        "schemas",
+        "install",
+        "compound-intent-driven",
+        "--apply-token",
+        schemaToken,
+        "--json",
+      ],
+      root,
+    ).code,
+  ).toBe(0);
+
+  const unavailableInstall = invoke(
+    [
+      "--project",
+      root,
+      "skills",
+      "install",
+      schema,
+      "--profile",
+      "codex",
+      "--bundle",
+      "all",
+      "--json",
+    ],
+    root,
+  );
+  expect(unavailableInstall.code).toBe(1);
+  expect(JSON.parse(unavailableInstall.stdout)).toMatchObject({
+    schemaVersion: 1,
+    command: "skills install",
+    ok: false,
+    error: {
+      code: "SKILL_BUNDLE_UNDECLARED",
+      message: expect.stringContaining("Declared tiers: default"),
+    },
+  });
+  const textRefusal = invoke(
+    [
+      "--project",
+      root,
+      "skills",
+      "install",
+      schema,
+      "--profile",
+      "codex",
+      "--bundle",
+      "all",
+    ],
+    root,
+  );
+  expect(textRefusal.code).toBe(1);
+  expect(decode(textRefusal.stdout)).toMatchObject({
+    ok: false,
+    error: {
+      code: "SKILL_BUNDLE_UNDECLARED",
+      message: expect.stringContaining("Declared tiers: default"),
+    },
+  });
+  await expect(
+    access(path.join(root, ".agents", "skills", "ce-brainstorm")),
+  ).rejects.toThrow();
+  expect(await readSelectionReceipt(root)).toBeNull();
+
+  const unavailable = invoke(
+    [
+      "--project",
+      root,
+      "schema",
+      "switch",
+      "compound-intent-driven",
+      "--profile",
+      "codex",
+      "--bundle",
+      "all",
+      "--json",
+    ],
+    root,
+  );
+  expect(unavailable.code).toBe(1);
+  const refusal = JSON.parse(unavailable.stdout);
+  expect(refusal).toMatchObject({
+    schemaVersion: 1,
+    command: "schema switch",
+    ok: false,
+    data: {
+      phase: "preview",
+      plan: { canApply: false },
+    },
+  });
+  expect(refusal.data.plan.diagnostics).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "SKILL_BUNDLE_UNDECLARED",
+        message: expect.stringContaining("Declared tiers: default"),
+      }),
+    ]),
+  );
+  expect(
+    refusal.data.plan.diagnostics.find(
+      (item: { code: string }) => item.code === "SKILL_BUNDLE_UNDECLARED",
+    ).message,
+  ).toContain("default bundle contains every declared skill");
+  await expect(
+    access(path.join(root, ".agents", "skills", "ce-brainstorm")),
+  ).rejects.toThrow();
+  expect(await Bun.file(path.join(root, "openspec/config.yaml")).text()).toBe(
+    "schema: spec-driven\n",
+  );
+  expect(await readSelectionReceipt(root)).toBeNull();
+
+  const bin = path.join(root, "bin");
+  await mkdir(bin);
+  const git = path.join(bin, "git");
+  await writeFile(
+    git,
+    `#!/bin/sh\nif [ "$1" != "clone" ]; then exit 99; fi\ncase "$6" in\n  *EveryInc*) names='ce-brainstorm ce-plan ce-work ce-simplify-code ce-code-review ce-compound' ;;\n  *) names='openspec-explore openspec-propose openspec-apply-change openspec-sync-specs openspec-archive-change' ;;\nesac\nfor name in $names; do\n  mkdir -p "$7/skills/$name"\n  printf '%s\\n' "# $name" > "$7/skills/$name/SKILL.md"\ndone\n`,
+  );
+  await chmod(git, 0o755);
+  const text = invoke(
+    [
+      "--project",
+      root,
+      "schema",
+      "switch",
+      "compound-intent-driven",
+      "--profile",
+      "codex",
+      "--bundle",
+      "default",
+    ],
+    root,
+    { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+  );
+  expect(text.code).toBe(0);
+  const preview = decode(text.stdout) as {
+    data: { plan: { canApply: boolean; profiles: { targets: unknown[] } } };
+  };
+  expect(preview.data.plan.canApply).toBe(true);
+  expect(preview.data.plan.profiles.targets).toHaveLength(11);
+  await expect(
+    access(path.join(root, ".agents", "skills", "ce-brainstorm")),
+  ).rejects.toThrow();
+  expect(
+    await Bun.file(path.join(root, "openspec", "config.yaml")).text(),
+  ).toBe("schema: spec-driven\n");
+});
+
+test("skills inspect gives bundled guidance only for proven known schema misses", async () => {
+  const root = await fixture();
+  const bin = path.join(root, "bin");
+  await mkdir(bin);
+  const executable = path.join(bin, "openspec");
+  await writeFile(
+    executable,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.13.2; exit 0; fi\necho "Schema \'compound-intent-driven\' not found" >&2\nexit 1\n',
+  );
+  await chmod(executable, 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+  const missing = invoke(
+    [
+      "--project",
+      root,
+      "skills",
+      "inspect",
+      "compound-intent-driven",
+      "--json",
+    ],
+    root,
+    env,
+  );
+  expect(missing.code).toBe(1);
+  expect(missing.stderr).toBe("");
+  expect(JSON.parse(missing.stdout)).toMatchObject({
+    schemaVersion: 1,
+    ok: false,
+    error: {
+      code: "OPENSPEC_FAILED",
+      message: expect.stringContaining(
+        "schemas bundled compound-intent-driven",
+      ),
+    },
+  });
+  expect(missing.stdout).toContain(
+    "schemas install compound-intent-driven --project <root>",
+  );
+  const unknownSchema = invoke(
+    ["--project", root, "skills", "inspect", "not-a-bundled-schema", "--json"],
+    root,
+    env,
+  );
+  expect(unknownSchema.code).toBe(1);
+  expect(JSON.parse(unknownSchema.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "OPENSPEC_FAILED" },
+  });
+  expect(unknownSchema.stdout).not.toContain("schemas bundled");
+
+  const help = invoke(["--help"], root);
+  expect(help.stdout).toContain(
+    "schemas install <bundled-schema-name> --project <root>",
+  );
+  expect(help.stdout).toContain("<bundled-schema-name>");
+  expect(help.stdout).toContain("Install packaged schema files only");
+
+  const notFoundPath = path.join(root, "bundled-source");
+  await mkdir(notFoundPath);
+  const pathInstall = invoke(
+    ["--project", root, "schemas", "install", notFoundPath, "--json"],
+    root,
+    env,
+  );
+  expect(pathInstall.code).toBe(1);
+  expect(JSON.parse(pathInstall.stdout)).toMatchObject({
+    ok: false,
+    error: { code: "BUNDLED_SCHEMA_NOT_FOUND" },
+  });
+  await expect(
+    access(path.join(root, "openspec", "schemas", path.basename(notFoundPath))),
+  ).rejects.toThrow();
+
+  await writeFile(
+    executable,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.13.2; exit 0; fi\necho "OpenSpec config parse failure" >&2\nexit 1\n',
+  );
+  const unrelated = invoke(
+    [
+      "--project",
+      root,
+      "skills",
+      "inspect",
+      "compound-intent-driven",
+      "--json",
+    ],
+    root,
+    env,
+  );
+  expect(unrelated.code).toBe(1);
+  expect(JSON.parse(unrelated.stdout)).toMatchObject({
+    ok: false,
+    error: {
+      code: "OPENSPEC_FAILED",
+      message: expect.stringContaining("OpenSpec config parse failure"),
+    },
+  });
+  expect(unrelated.stdout).not.toContain("schemas bundled");
+
+  await writeFile(
+    executable,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.13.2; exit 0; fi\nif [ "$1" = "schema" ] && [ "$2" = "which" ]; then printf '%s\\n' '{"name":"compound-intent-driven","path":"${path.join(schemaResources, "openspec/schemas/compound-intent-driven")}","shadows":[]}'; exit 0; fi\necho "unexpected command" >&2\nexit 99\n`,
+  );
+  const inspectUnavailable = invoke(
+    [
+      "--project",
+      root,
+      "skills",
+      "inspect",
+      "compound-intent-driven",
+      "--bundle",
+      "all",
+      "--json",
+    ],
+    root,
+    env,
+  );
+  expect(inspectUnavailable.code).toBe(0);
+  const inspected = JSON.parse(inspectUnavailable.stdout);
+  expect(inspected).toMatchObject({
+    schemaVersion: 1,
+    ok: true,
+    data: { requestedBundle: "all" },
+  });
+  expect(
+    inspected.data.bundles.map((item: { name: string; available: boolean }) => [
+      item.name,
+      item.available,
+    ]),
+  ).toEqual([
+    ["default", true],
+    ["recommended", false],
+    ["all", false],
+  ]);
+  expect(inspected.data.bundles[0].declarations).toHaveLength(11);
+  expect(inspected.data.bundles[1].declarations).toEqual([]);
+  expect(inspected.data.bundles[2].declarations).toEqual([]);
+});
+
+test("create and pin reconciliation refuse undeclared tiers without recording selection", async () => {
+  const root = await fixture();
+  const schema = "compound-intent-driven";
+  const install = invoke(
+    ["--project", root, "schemas", "install", schema, "--json"],
+    root,
+  );
+  expect(install.code).toBe(0);
+  const token = JSON.parse(install.stdout).data.confirmation.token as string;
+  expect(
+    invoke(
+      [
+        "--project",
+        root,
+        "schemas",
+        "install",
+        schema,
+        "--apply-token",
+        token,
+        "--json",
+      ],
+      root,
+    ).code,
+  ).toBe(0);
+
+  const creation = invoke(
+    [
+      "--project",
+      root,
+      "change",
+      "create",
+      "bad-tier",
+      "--description",
+      "Reject an unavailable bundle",
+      "--schema",
+      schema,
+      "--profile",
+      "codex",
+      "--bundle",
+      "all",
+      "--json",
+    ],
+    root,
+  );
+  expect(creation.code).toBe(1);
+  expect(JSON.parse(creation.stdout)).toMatchObject({
+    ok: false,
+    error: {
+      code: "SKILL_BUNDLE_UNDECLARED",
+      message: expect.stringContaining("Declared tiers: default"),
+    },
+  });
+  await expect(
+    access(path.join(root, "openspec", "changes", "bad-tier")),
+  ).rejects.toThrow();
+
+  const legacy = path.join(root, "openspec", "changes", "unassociated-tier");
+  await mkdir(legacy);
+  await writeFile(path.join(legacy, ".openspec.yaml"), `schema: ${schema}\n`);
+  const revision = await resolveRevision(new OpenSpecClient(root), schema);
+  const reconcile = invoke(
+    [
+      "--project",
+      root,
+      "skills",
+      "reconcile",
+      "unassociated-tier",
+      "--revision-digest",
+      revision.digest,
+      "--bundle",
+      "all",
+      "--json",
+    ],
+    root,
+  );
+  expect(reconcile.code).toBe(1);
+  expect(JSON.parse(reconcile.stdout)).toMatchObject({
+    ok: false,
+    error: {
+      code: "SKILL_BUNDLE_UNDECLARED",
+      message: expect.stringContaining("Declared tiers: default"),
+    },
+  });
+  await expect(
+    access(path.join(legacy, ".opsx-provenance.json")),
+  ).rejects.toThrow();
 });
 
 test("bundled schema validation uses OpenSpec schema validate outside a project", async () => {
@@ -745,7 +1133,7 @@ test(
       [...args, "--apply-token", output.data.confirmation.token, "--json"],
       root,
     );
-    expect(applied.code).toBe(0);
+    expect(applied.code, applied.stdout).toBe(0);
     const appliedOutput = JSON.parse(applied.stdout);
     expect(appliedOutput).toMatchObject({
       ok: true,
