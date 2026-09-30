@@ -5,11 +5,12 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-30
+
 ### Changed
 
 - Split existing CLI command handlers and lifecycle workflows into focused modules
-  without changing CLI behavior or package version; remove the creation/switch/handoff
-  import cycle.
+  without changing CLI behavior; remove the creation/switch/handoff import cycle.
 
 ### Added
 
