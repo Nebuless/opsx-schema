@@ -3,19 +3,25 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createChange } from "../../src/cli/create.ts";
 import {
-  archiveChange,
-  createChange,
   getArtifactInstructions,
   getChangeStatus,
+  validateChangeAction,
+} from "../../src/cli/read.ts";
+import { archiveChange } from "../../src/cli/archive.ts";
+import {
   handoffChangeSchema,
   previewSchemaHandoff,
-  validateChangeAction,
-} from "../../src/cli/index.ts";
+} from "../../src/cli/handoff.ts";
 import { changeDirectory, listArchived } from "../../src/archive/index.ts";
 import { readProvenance } from "../../src/provenance/index.ts";
 import { checkRevision } from "../../src/revisions/index.ts";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
+import {
+  acquireProjectMutationLock,
+  withProjectMutationLock,
+} from "../../src/project-lock.ts";
 
 const fixtures: string[] = [];
 const repository = path.resolve(
@@ -41,6 +47,27 @@ async function fixture(): Promise<string> {
   );
   return root;
 }
+
+test("project mutation lock is exclusive and releases after callback failure", async () => {
+  const root = await fixture();
+  const release = await acquireProjectMutationLock(root);
+  await expect(
+    readFile(path.join(root, "openspec", ".opsx-switch.lock"), "utf8"),
+  ).resolves.toMatch(/^[0-9a-f-]+\n$/);
+  await expect(
+    withProjectMutationLock(root, async () => "unreachable"),
+  ).rejects.toMatchObject({ code: "PROJECT_LOCKED" });
+  await release();
+
+  await expect(
+    withProjectMutationLock(root, async () => {
+      throw new Error("callback failed");
+    }),
+  ).rejects.toThrow("callback failed");
+  await expect(
+    withProjectMutationLock(root, async () => "released"),
+  ).resolves.toBe("released");
+});
 
 async function installCompoundSchema(root: string): Promise<void> {
   const destination = path.join(
@@ -232,6 +259,19 @@ test(
     if (!preview.ok || preview.phase !== "preview")
       throw new Error("Expected archive preview");
     expect(preview.confirmation?.exactTarget).toContain(input.change);
+    const release = await acquireProjectMutationLock(root);
+    try {
+      const locked = await archiveChange(root, input.change, {
+        applyToken: preview.confirmation!.token,
+      });
+      expect(locked.ok).toBe(false);
+      if (!locked.ok) expect(locked.error.code).toBe("PROJECT_LOCKED");
+      await expect(changeDirectory(root, input.change)).resolves.toBe(
+        path.join(root, "openspec", "changes", input.change),
+      );
+    } finally {
+      await release();
+    }
     const archived = await archiveChange(root, input.change, {
       applyToken: preview.confirmation!.token,
     });

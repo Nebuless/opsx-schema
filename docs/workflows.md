@@ -1,6 +1,6 @@
 # Workflows and schema choices
 
-Run every command below with `bunx opsx-schema`; Bun downloads the published package when needed, without a global installation. Use Bun 1.4 or newer. Project-aware commands need OpenSpec CLI 1.12.0 on `PATH` and an OpenSpec project; run them from its root or put `--project <root>` immediately after `opsx-schema`. OpenSpec remains responsible for change status, artifact instructions, validation, and archive.
+Run Opsx commands below with `bunx opsx-schema`; Bun downloads the package when needed, without a global installation. Native OMP examples use OMP's own supported command. Use Bun 1.4 or newer. Project-aware commands need OpenSpec CLI 1.12.0 on `PATH` and an OpenSpec project; run them from its root or put `--project <root>` immediately after `opsx-schema`. OpenSpec remains responsible for change status, artifact instructions, validation, and archive.
 
 ## Choose and activate a schema
 
@@ -10,7 +10,7 @@ bunx opsx-schema schemas bundled intent-driven
 bunx opsx-schema --project . schemas install intent-driven
 ```
 
-`schemas bundled` works even before you have a project. `schemas install` previews copying a bundled schema into the selected project; it does not change the default. Review the proposed files and repeat with the returned token:
+`schemas bundled` works even before you have a project. `schemas install` takes a bundled catalog name, not a directory path; use one `--project` option per invocation. It previews copying that bundle into the selected project and does not change the default. Review the proposed files and repeat with the returned token:
 
 ```sh
 bunx opsx-schema --project . schemas install intent-driven --apply-token <token-from-install-preview>
@@ -19,7 +19,7 @@ bunx opsx-schema --project . schema switch intent-driven --profile codex --bundl
 bunx opsx-schema --project . schema switch intent-driven --profile codex --bundle default --apply-token <token-from-switch-preview>
 ```
 
-`schema switch` selects the default workflow. `--profile codex` chooses the named Codex skill destination; `--bundle default` chooses the schema's default companion skill set. Use `--skill-host omp` (or another native host) instead when that is your target. Choose your actual profile/host and review its trust and destination details in the preview; these commands do not install MCP providers. If you want to keep the existing default and only use a schema for one new change, supply `--schema <installed-name>` to `change create` instead.
+`schema switch` selects the default workflow. `--profile codex` chooses the named Codex skill destination; `--bundle default` chooses the schema's default companion skill set. Bundle tiers are schema-declared and vary by schema: `compound-intent-driven` declares 11 skills in `default` and does not declare `recommended` or `all`. Inspect available tiers with `skills inspect <installed-name>`; an unsupported tier fails rather than silently selecting another. Use `--skill-host omp` (or another native host) instead when that is your target. Choose your actual profile/host and review its trust and destination details in the preview; these commands do not install MCP providers. If you want to keep the existing default and only use a schema for one new change, supply `--schema <installed-name>` to `change create` instead.
 
 ## Work on a change
 
@@ -47,10 +47,10 @@ Use these command forms after `bunx opsx-schema`. Reads do not change your proje
 | Dashboard | *(no command)* | Overview, Changes, Archive and Settings in an interactive terminal. No TTY: use a command instead. |
 | See project work | `status`; `changes [name] [file]`; `archive [name] [file]` | Project state, active changes, or archived records. |
 | Browse project resources | `schemas [name]`; `resources [schema]` | Resolved schemas and their declared companion resources. |
-| Browse/install/validate bundles | `schemas bundled [name]`; `schemas install <name> --project <root>`; `schemas validate [name]` | Package catalog, an installation preview, or OpenSpec validation of an installed schema. |
+| Browse/install/validate bundles | `schemas bundled [name]`; `schemas install <bundled-schema-name> --project <root>`; `schemas validate [name]` | Package catalog, an installation preview, or OpenSpec validation of an installed schema. |
 | Change project default | `schema switch <name>` | Preview a default-schema and optional skill-selection change; add `--migrate <change>` for eligible active changes. |
 | Create and finish work | `change create <name> --description <text>`; `change status <name>`; `change instructions <name> <artifact>`; `change validate <name>`; `change archive <name>`; `change schema <name> <schema>` | OpenSpec change lifecycle, artifact guidance, validation, archive, or explicit handoff. |
-| Inspect and manage skills | `skills inspect [schema]`; `skills doctor`; `skills install [schema] --profile <agent-id> --bundle default`; `skills reconcile <change> --revision-digest <sha256> --bundle default`; `skills disable <project-relative-target>` | Skill catalog and health; guarded install, legacy association reconciliation, or disable. Named profiles and native `--skill-host <host>` are separate destinations. |
+| Inspect and manage skills | `skills inspect [schema]`; `skills doctor`; `skills install [schema] --profile <agent-id> --bundle <declared-tier>`; `skills replace <project-relative-target> --schema <installed-name> --bundle <declared-tier> --backup-id <unique-id>`; `skills replace inspect <backup-id>`; `skills restore <backup-id>`; `skills reconcile <change> --revision-digest <sha256> --bundle <declared-tier>`; `skills disable <project-relative-target>` | Skill tiers and health; guarded install or exact single-target unmanaged collision replacement with retained backup, inspection and separate guarded restore; legacy association reconciliation or disable. Named profiles and native `--skill-host <host>` are separate destinations. |
 | Inspect/install MCP providers | `mcp list --schema <name>`; `mcp inspect <provider> --schema <name>`; `mcp install <provider> --host <host> --schema <name>` | Read a schema's declared provider catalog or preview host configuration. Apply also needs a live TTY and explicit human safety approval. Switching schemas never installs an MCP provider. |
 | Install Compound command adapters | `adapters inspect <host> --scope project`; `adapters install <host> --scope project` | Inspect or preview slash-command templates for an installed bundled `compound-intent-driven` schema. Distinct from skills. |
 | Check health | `doctor`; `verify` | Project diagnostics or aggregate schema, change, skill and MCP checks. |
@@ -65,6 +65,58 @@ bunx opsx-schema --project . doctor
 ```
 
 An `mcp install` **preview** only reads catalog data and shows the proposed host config. Its Apply step requires interactive approval at the terminal, in addition to a fresh token. Do not pipe approval or run it unattended. `skills install` previews may fetch external skill repositories; `skills inspect` is local. For exact profile IDs, host destinations, and special-case prerequisites, use the [command reference](./commands.md#named-profiles-and-skills).
+
+## Resolve OMP skill collisions safely
+
+Keep bundled discovery, schema installation, skill replacement, activation and command adapters separate. Each mutation gets its own preview and fresh apply token; do not reuse tokens across commands. `skills replace` changes one selected skill directory only: it does not activate the schema, install remaining skills or install command adapters. Normal installation and switching still refuse unmanaged collisions.
+
+```sh
+# Discover bundled schema name and resources before selecting project workflow.
+bunx opsx-schema schemas bundled compound-intent-driven
+
+# Install the named schema into this project. Review and apply with this install preview's token.
+bunx opsx-schema --project . schemas install compound-intent-driven
+bunx opsx-schema --project . schemas install compound-intent-driven --apply-token <token-from-schema-install-preview>
+
+# Inspect declared skill tiers; compound-intent-driven default has 11 skills.
+bunx opsx-schema --project . skills inspect compound-intent-driven
+bunx opsx-schema --project . skills inspect compound-intent-driven --bundle default
+
+# Replace one exact unmanaged OMP target. Review and apply with this replacement preview's token.
+bunx opsx-schema --project . skills replace .omp/skills/<skill-name> --schema compound-intent-driven --bundle default --backup-id omp-collision-1
+bunx opsx-schema --project . skills replace .omp/skills/<skill-name> --schema compound-intent-driven --bundle default --backup-id omp-collision-1 --apply-token <token-from-this-replacement-preview>
+bunx opsx-schema --project . skills replace inspect omp-collision-1
+
+# Repeat per remaining collision using a new backup ID and fresh token each time.
+# Then review and apply an ordinary full-set switch with its own new token.
+bunx opsx-schema --project . schema switch compound-intent-driven --skill-host omp --bundle default
+bunx opsx-schema --project . schema switch compound-intent-driven --skill-host omp --bundle default --apply-token <token-from-this-switch-preview>
+
+# Install command adapters separately; they are not skills. Use another fresh token.
+bunx opsx-schema --project . adapters inspect omp --scope project --schema compound-intent-driven
+bunx opsx-schema --project . adapters install omp --scope project --schema compound-intent-driven
+bunx opsx-schema --project . adapters install omp --scope project --schema compound-intent-driven --apply-token <token-from-this-adapter-preview>
+
+# Check each component separately; `verify` may still fail on an older unknown-provenance change.
+bunx opsx-schema --project . schemas validate compound-intent-driven
+bunx opsx-schema --project . skills doctor
+bunx opsx-schema --project . adapters inspect omp --scope project --schema compound-intent-driven
+bunx opsx-schema --project . status
+bunx opsx-schema --project . verify
+```
+
+Use a unique safe `--backup-id` per target. Replacement preview identifies target/source, shared consumers, backup, changed files and digests. Byte-identical unmanaged files still need explicit replacement review; edited managed content, unsafe paths, ambiguous sources or incomplete active-pin knowledge refuse. Apply rechecks the target, ownership and active-pin guard; stale plans fail closed. Backups and receipts remain available. To restore, preview the separate operation and use its own fresh token:
+
+```sh
+bunx opsx-schema --project . skills restore omp-collision-1
+bunx opsx-schema --project . skills restore omp-collision-1 --apply-token <token-from-this-restore-preview>
+```
+
+After each replacement, use a fresh full-set switch preview. Do not infer successful activation from replacement or successful command-adapter installation. Check native OMP discovery separately using OMP's supported reads, for example `omp read skill://<skill-name>`, and verify slash commands through OMP's command picker; do not use unsupported `get_commands` RPC. An installed filesystem tree alone is not proof that OMP discovers or executes it.
+
+If replacement is interrupted between moving the original target aside and installing the staged skill, `skills replace inspect <backup-id>` reports the missing target and recorded rollback path. `skills restore <backup-id>` can recover only when the retained backup, original rollback tree, ownership, and active-pin checks still match the receipt. Review that preview and apply its fresh token; changed or missing evidence is refused, not overwritten.
+
+An older active change can keep aggregate `verify` failing with `PROVENANCE_UNKNOWN` while current schema and skill integrity checks succeed. The result names the failing component; current-schema validity does not establish historical creation revision. `skills reconcile` records only a reviewed exact current revision and selection when provable. It leaves `created: null` / Unknown creation history unknown and refuses missing/drifted revisions or unproven selections. Adapter checks remain separate from aggregate verify.
 
 ## Which schema fits?
 

@@ -1,13 +1,24 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
-import { previewSchemaHandoff } from "../../src/cli/index.ts";
+import { createChange } from "../../src/cli/create.ts";
+import { previewSchemaHandoff } from "../../src/cli/handoff.ts";
 import {
+  applySkillReplacement,
   loadAgentProfileDigest,
   loadSkillBundles,
+  previewSkillReplacement,
 } from "../../src/resources/index.ts";
 import {
   readProvenance,
@@ -19,6 +30,7 @@ import {
 import type { ChangeSelectionAssociation } from "../../src/provenance/index.ts";
 import { resolveRevision, retainRevision } from "../../src/revisions/index.ts";
 import { apply, inspectRecovery, preview } from "../../src/switch/index.ts";
+import { assertNoIncompleteSwitchRecovery } from "../../src/switch/recovery.ts";
 import type { SkillInstallHostId } from "../../src/resources/index.ts";
 
 const fixtures: string[] = [];
@@ -119,6 +131,274 @@ async function fixture(
 async function config(root: string): Promise<string> {
   return readFile(path.join(root, "openspec", "config.yaml"), "utf8");
 }
+
+async function writeSwitchJournal(
+  root: string,
+  state: "applying" | "partial" | "complete",
+  target: string,
+): Promise<void> {
+  const directory = path.join(root, "openspec", ".opsx");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "switch-journal.json"),
+    JSON.stringify({
+      version: 1,
+      id: "fixture-switch",
+      state,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      root,
+      request: { schema: "minimalist", profiles: [], migrations: [] },
+      previewToken: "fixture-token",
+      oldDefault: "spec-driven",
+      targetDefault: "minimalist",
+      actions: [
+        {
+          id: "fixture-action",
+          kind: "skills.install",
+          status: state === "complete" ? "complete" : "running",
+          targets: [target],
+          intent: "Install selected fixture skill",
+        },
+      ],
+    }),
+  );
+}
+
+test("switch recovery guard blocks only overlapping incomplete targets", async () => {
+  const { root } = await fixture();
+  const target = path.join(root, ".agents", "skills", "fixture-skill");
+  await writeSwitchJournal(root, "partial", target);
+
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [target]),
+  ).rejects.toMatchObject({ code: "SWITCH_RECOVERY_REQUIRED" });
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [path.join(target, "nested-skill")]),
+  ).rejects.toMatchObject({ code: "SWITCH_RECOVERY_REQUIRED" });
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [
+      path.join(root, ".agents", "skills"),
+    ]),
+  ).rejects.toMatchObject({ code: "SWITCH_RECOVERY_REQUIRED" });
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [
+      path.join(root, ".agents", "other"),
+    ]),
+  ).resolves.toBeUndefined();
+
+  await writeSwitchJournal(root, "complete", target);
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [target]),
+  ).resolves.toBeUndefined();
+});
+
+test("switch recovery guard fails closed for malformed and unsafe journals", async () => {
+  const { root } = await fixture();
+  const directory = path.join(root, "openspec", ".opsx");
+  const journalPath = path.join(directory, "switch-journal.json");
+  await mkdir(directory, { recursive: true });
+  await writeFile(journalPath, "{broken");
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [
+      path.join(root, ".agents", "skills"),
+    ]),
+  ).rejects.toMatchObject({ code: "SWITCH_JOURNAL_INVALID" });
+
+  await rm(journalPath);
+  await symlink(path.join(root, "openspec", "config.yaml"), journalPath);
+  await expect(
+    assertNoIncompleteSwitchRecovery(root, [
+      path.join(root, ".agents", "skills"),
+    ]),
+  ).rejects.toMatchObject({ code: "SWITCH_JOURNAL_UNSAFE" });
+});
+
+test("schema pin writer serializes against resource replacement", async () => {
+  const { root, sources } = await fixture({
+    changes: ["migrate"],
+    compatible: ["migrate"],
+    profiles: true,
+  });
+  const targetSchema = path.join(root, "openspec", "schemas", "handoff-target");
+  await cp(
+    path.join(root, "openspec", "schemas", "legacy-schema"),
+    targetSchema,
+    { recursive: true },
+  );
+  await writeFile(
+    path.join(targetSchema, "skills.txt"),
+    "openspec-git-discipline\n",
+  );
+
+  const skillTarget = path.join(
+    root,
+    ".agents",
+    "skills",
+    "openspec-git-discipline",
+  );
+  await mkdir(skillTarget, { recursive: true });
+  await writeFile(path.join(skillTarget, "SKILL.md"), "Local content\n");
+  const resourceOptions = {
+    profileManifestPath: path.join(root, "profiles.json"),
+    sourceRoots: sourceRoots(sources),
+    resolveActivePins: async () => [],
+  };
+  const replacementRequest = {
+    projectRoot: root,
+    schema: "handoff-target",
+    schemaRoot: targetSchema,
+    bundle: "default" as const,
+    target: ".agents/skills/openspec-git-discipline",
+    backupId: "pin-writer-race",
+  };
+  const replacementPreview = await previewSkillReplacement(
+    replacementRequest,
+    resourceOptions,
+  );
+  const pinInput = {
+    change: "pin-race",
+    description: "Verify serialized Opsx pin writer",
+  };
+  const pinPreview = await createChange(root, pinInput);
+  expect(pinPreview.ok && pinPreview.phase).toBe("preview");
+  if (!pinPreview.ok || pinPreview.phase !== "preview")
+    throw new Error("Expected pin creation preview");
+  const entered = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  let armed = false;
+  let paused = false;
+  const blockingOptions = {
+    ...resourceOptions,
+    resolveActivePins: async () => {
+      if (armed && !paused) {
+        paused = true;
+        entered.resolve();
+        await resume.promise;
+      }
+      return [];
+    },
+  };
+
+  armed = true;
+  const applying = applySkillReplacement(
+    replacementPreview,
+    replacementPreview.token,
+    blockingOptions,
+  );
+  await entered.promise;
+  const blockedWriter = await createChange(root, pinInput, {
+    applyToken: pinPreview.confirmation!.token,
+  });
+  expect(blockedWriter.ok).toBe(false);
+  if (!blockedWriter.ok)
+    expect(blockedWriter.error.code).toBe("PROJECT_LOCKED");
+  await expect(
+    readFile(
+      path.join(root, "openspec", "changes", "pin-race", ".openspec.yaml"),
+    ),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+
+  resume.resolve();
+  const replaced = await applying;
+  expect(replaced.phase).toBe("complete");
+  const serializedWriter = await createChange(root, pinInput, {
+    applyToken: pinPreview.confirmation!.token,
+  });
+  expect(serializedWriter.ok && serializedWriter.phase).toBe("applied");
+  expect(
+    await readFile(
+      path.join(root, "openspec", "changes", "pin-race", ".openspec.yaml"),
+      "utf8",
+    ),
+  ).toContain("schema: spec-driven");
+});
+
+test("completed replacement leaves other unmanaged profile collision blocking switch", async () => {
+  const { root, sources } = await fixture({ profiles: true });
+  const profileManifestPath = path.join(root, "profiles.json");
+  await writeFile(
+    profileManifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      agents: {
+        alpha: { label: "Alpha", target: ".agents/skills" },
+        beta: { label: "Beta", target: ".beta/skills" },
+      },
+    }),
+  );
+  const replacementTarget = path.join(
+    root,
+    ".agents",
+    "skills",
+    "openspec-git-discipline",
+  );
+  await mkdir(replacementTarget, { recursive: true });
+  await writeFile(path.join(replacementTarget, "SKILL.md"), "Local copy\n");
+  const unmanaged = path.join(
+    root,
+    ".beta",
+    "skills",
+    "openspec-git-discipline",
+  );
+  await mkdir(unmanaged, { recursive: true });
+  await writeFile(path.join(unmanaged, "SKILL.md"), "Keep unmanaged copy\n");
+
+  const schemaRoot = path.join(root, "openspec", "schemas", "legacy-schema");
+  await writeFile(
+    path.join(schemaRoot, "skills.txt"),
+    "openspec-git-discipline\n",
+  );
+  const options = {
+    profileManifestPath,
+    sourceRoots: sourceRoots(sources),
+    resolveActivePins: async () => [],
+  };
+  const replacementRequest = {
+    projectRoot: root,
+    schema: "legacy-schema",
+    schemaRoot,
+    bundle: "default" as const,
+    target: ".agents/skills/openspec-git-discipline",
+    backupId: "one-of-two-targets",
+  };
+  const replacement = await previewSkillReplacement(
+    replacementRequest,
+    options,
+  );
+  const replaced = await applySkillReplacement(
+    replacement,
+    replacement.token,
+    options,
+  );
+  expect(replaced.phase).toBe("complete");
+  expect(await readFile(path.join(unmanaged, "SKILL.md"), "utf8")).toBe(
+    "Keep unmanaged copy\n",
+  );
+
+  const switchRequest = {
+    ...request,
+    schema: "minimalist",
+    profiles: ["alpha", "beta"],
+  };
+  const reviewed = await preview(root, switchRequest, {
+    profileManifestPath,
+    sourceRoots: sourceRoots(sources),
+  });
+  expect(reviewed.canApply).toBe(false);
+  expect(reviewed.diagnostics.some((item) => item.severity === "error")).toBe(
+    true,
+  );
+  await expect(
+    apply(root, switchRequest, reviewed.token, {
+      profileManifestPath,
+      sourceRoots: sourceRoots(sources),
+    }),
+  ).rejects.toMatchObject({ code: "SWITCH_BLOCKED" });
+  expect(await readFile(path.join(unmanaged, "SKILL.md"), "utf8")).toBe(
+    "Keep unmanaged copy\n",
+  );
+});
 
 async function plan(root: string, profiles = false, migrations: string[] = []) {
   const options = profiles

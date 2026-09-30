@@ -5,6 +5,21 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+### Changed
+
+- Split existing CLI command handlers and lifecycle workflows into focused modules
+  without changing CLI behavior or package version; remove the creation/switch/handoff
+  import cycle.
+
+### Added
+
+- Add schema-declared skill-tier diagnostics, guided named schema installation,
+  single-target reviewed OMP skill replacement with retained backups and guarded
+  restore, plus component-specific verification; keep command adapters separate.
+- Restore tracked root agent guidance with repository ownership, OpenSpec authority,
+  mutation safety, verification, and delivery rules; correct scoped schema and
+  adapter instruction paths.
+
 ### Fixed
 
 - Wait for post-publication npm registry visibility before strict release

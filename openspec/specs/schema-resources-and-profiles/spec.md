@@ -39,6 +39,52 @@ Apply SHALL detect stale or concurrent changes, keep the default from pointing t
 - **WHEN** Opsx resumes or a person inspects the project
 - **THEN** the old default remains usable, partial owned writes are identified and recoverable, and no success is reported.
 
+### Requirement: Reviewed single-target unmanaged skill replacement and restoration
+The CLI SHALL provide a distinct operation to replace exactly one existing unmanaged skill directory from an unambiguous declaration of an explicitly selected installed schema and declared bundle. Ordinary skill installation and schema switching MUST continue to refuse unmanaged collisions. Replacement SHALL require the exact project-relative target, a unique caller-supplied backup identifier, an exact review preview, and a fresh token bound to target, source, backup, active-pin guard, and inventory. It MUST refuse active-required, managed, modified-managed, unsafe, symlinked, special, ambiguously mapped, missing, or changed targets and MUST NOT treat byte-identical unowned content as managed. Replacement SHALL preserve and verify the prior tree in a retained backup before swapping in verified declared content, record truthful recoverable receipt state, and claim completion only when target, ownership and receipt agree. Read-only receipt inspection and separate preview/token restoration SHALL retain backup/receipt evidence; restoration MUST refuse to overwrite external edits or remove a target currently required by an active change. Neither operation SHALL activate a schema or install other skills, adapters, or providers.
+
+#### Scenario: Five OMP collisions are resolved one at a time
+- **GIVEN** a selected OMP bundle has five unmanaged collisions and six missing skill directories
+- **WHEN** a caller reviews and applies replacement for one exact collision
+- **THEN** the selected tree is backed up and replaced, the remaining collisions remain unresolved, and ordinary full-set switch still requires a fresh preview after those collisions are individually resolved.
+
+#### Scenario: Byte-identical unmanaged and modified managed trees
+- **GIVEN** one unmanaged skill tree matches declared bytes and a different managed tree has local edits
+- **WHEN** the caller previews replacement of either directory
+- **THEN** the unowned tree still requires explicit reviewed replacement and the edited managed tree is refused without changing either tree.
+
+#### Scenario: Stale replacement or occupied backup identifier
+- **GIVEN** a preview and token bound to one exact target, source, backup identifier, and active-pin inventory
+- **WHEN** source, target, ownership, active-pin guard, or backup occupancy changes before Apply
+- **THEN** Apply refuses without replacing the target or overwriting the backup.
+
+#### Scenario: Restore after external edit or new active pin
+- **GIVEN** a completed replacement whose target was externally edited or became required by a newly created active change
+- **WHEN** a caller previews restoring its retained backup
+- **THEN** restoration refuses, preserves user and managed data plus receipt evidence, and reports the observed blocker.
+
+#### Scenario: Interrupted replacement
+- **GIVEN** replacement stops after backup, staging, target swap, ownership write, or receipt write
+- **WHEN** a caller inspects the exact backup receipt
+- **THEN** inspection reports the durable observed phase and safe recovery evidence without claiming success or overwriting changed data.
+
+### Requirement: Coordinated active-pin and resource writes
+Any Opsx-controlled operation that creates, hands off, archives, reconciles, or migrates an active change's schema/skill association SHALL coordinate with schema switching, skill replacement, and restoration through a common project mutation lock protocol, using a compatible project-first order and acquiring the resource lock after the project lock when both are required. Replacement and restoration SHALL re-evaluate exact active-pin requirements under the held lock before touching the target, re-derive complete verified active-pin targets, and recheck authoritative pin/selection and target/ownership state at write boundaries. Incomplete pin knowledge MUST refuse destructive actions. Non-cooperating OpenSpec commands and external editors do not take this lock; observed changes SHALL cause stale or partial-state refusal at write boundaries, and the CLI SHALL report detected external drift rather than overwrite it or claim atomic exclusion. Ordinary schema switching and skill installation MUST retain their current ownership refusal and recoverable-write behavior, and a collision replacement receipt SHALL remain distinct from a schema-switch journal.
+
+#### Scenario: Concurrent pin writer during replacement
+- **GIVEN** an Opsx-controlled operation attempts to add an active skill requirement while replacement is in progress
+- **WHEN** both operations contend for the coordinated locks
+- **THEN** they serialize without deadlock and replacement cannot overwrite a skill that became required by the active pin.
+
+#### Scenario: Active pin races replacement Apply
+- **GIVEN** a replacement preview finds an unmanaged skill target not required by an active pin
+- **WHEN** a concurrent change creation or reconciliation tries to make the same target required during replacement Apply
+- **THEN** the operations serialize, the pin requirement is rechecked under the common lock, and either replacement refuses or the pin writer observes completed replacement before proceeding; no intermediate unbacked-up tree becomes an approved pin target.
+
+#### Scenario: Existing switch journal requires recovery
+- **GIVEN** schema switching has an unresolved partial-state journal
+- **WHEN** a caller requests replacement of a target affected by that transaction
+- **THEN** replacement refuses until recovery is inspected; it does not interpret the switch journal as proof of ownership or replace the target beneath incomplete recovery.
+
 ### Requirement: Separate approved MCP installation
 An MCP server SHALL be selected only from a declared safe catalog with a supported host and a preview of URL, permissions/auth metadata, config path and diff. Installation MUST require immediate interactive human provider-safety approval, including from CLI; non-TTY callers MAY inspect/preview but MUST be refused for Apply. A schema switch SHALL NOT install MCP servers implicitly.
 
