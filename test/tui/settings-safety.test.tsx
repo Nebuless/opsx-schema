@@ -11,7 +11,9 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { act } from "react";
+import { act, useState } from "react";
+import { ScrollBoxRenderable, TextRenderable } from "@opentui/core";
+import type { Renderable } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
 import type {
   ChangeSummary,
@@ -60,9 +62,44 @@ async function withTTY<T>(tty: boolean, action: () => Promise<T>): Promise<T> {
   }
 }
 
-async function fixture(changes: readonly ChangeSummary[] = []) {
-  const root = await mkdtemp(path.join(tmpdir(), "opsx-settings-safety-"));
-  fixtures.push(root);
+// Choose a root that puts the requested separator in the last column of the
+// old 56-cell leaf. Native word wrapping, not TMPDIR luck, selects the padding.
+async function separatorRoot(parent: string, host: "pi" | "atomic") {
+  const probe = await testRender(
+    <text id="separator-probe" width={56} wrapMode="word" />,
+    { width: 60, height: 18 },
+  );
+  try {
+    const leaf = probe.renderer.root.findDescendantById("separator-probe");
+    if (!(leaf instanceof TextRenderable))
+      throw new Error("Missing text probe");
+    for (let padding = 0; padding < 56; padding++) {
+      const root = path.join(parent, "review" + "x".repeat(padding));
+      const content = `- ${host.toUpperCase()}: ${root}/.${host}/skills; verified; noop; trust external;`;
+      await act(async () => {
+        leaf.content = content;
+        await probe.renderOnce();
+        await probe.waitForVisualIdle();
+      });
+      const separator = content.indexOf("/skills");
+      if (leaf.lineInfo.lineStartCols.some((start) => separator - start === 55))
+        return root;
+    }
+    throw new Error(`No ${host} separator boundary within one wrap period`);
+  } finally {
+    act(() => probe.renderer.destroy());
+  }
+}
+
+async function fixture(
+  changes: readonly ChangeSummary[] = [],
+  separatorHost?: "pi" | "atomic",
+) {
+  const parent = await mkdtemp(path.join(tmpdir(), "opsx-settings-safety-"));
+  fixtures.push(parent);
+  const root = separatorHost
+    ? await separatorRoot(parent, separatorHost)
+    : parent;
   await mkdir(path.join(root, "openspec", "changes"), { recursive: true });
   await writeFile(
     path.join(root, "openspec", "config.yaml"),
@@ -221,6 +258,161 @@ test(
       for (const root of hostRoots) expect(compactReview).toContain(root);
       expect(normalizedReview).toContain("trust external");
       expect(normalizedReview).toContain("Opsx cannot verify or grant it.");
+      expect((await readdir(root, { recursive: true })).sort()).toEqual(before);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  },
+  { timeout: 30_000 },
+);
+
+function reviewViewport(setup: FrameSetup): ScrollBoxRenderable {
+  function find(node: Renderable): ScrollBoxRenderable | undefined {
+    if (
+      node instanceof ScrollBoxRenderable &&
+      node
+        .getChildren()
+        .some(
+          (child) =>
+            child instanceof TextRenderable &&
+            child.plainText.startsWith("- PI:"),
+        )
+    )
+      return node;
+    for (const child of node.getChildren()) {
+      const found = find(child);
+      if (found) return found;
+    }
+  }
+  const found = find(setup.renderer.root);
+  if (!found) throw new Error("Missing native Settings review viewport");
+  return found;
+}
+
+function compactFrame(frame: string) {
+  return frame.replaceAll(/[│┌┐└┘─]/g, "").replaceAll(/\s+/g, "");
+}
+
+test.each(["pi", "atomic"] as const)(
+  "%s separator-boundary review preserves full paths through scroll, resize and remount",
+  async (host) => {
+    const { root, snapshot } = await fixture([], host);
+    const before = (await readdir(root, { recursive: true })).sort();
+    let setMounted: (mounted: boolean) => void = () => {};
+    let setActive: (active: boolean) => void = () => {};
+    function Harness() {
+      const [mounted, updateMounted] = useState(true);
+      const [active, updateActive] = useState(true);
+      setMounted = updateMounted;
+      setActive = updateActive;
+      return mounted ? (
+        <Settings
+          root={root}
+          snapshot={snapshot}
+          onRefresh={() => {}}
+          active={active}
+        />
+      ) : (
+        <box />
+      );
+    }
+    const setup = await testRender(<Harness />, { width: 60, height: 18 });
+    const destinations = SKILL_INSTALL_HOST_IDS.map((id) =>
+      path.join(root, "." + id, "skills"),
+    );
+    async function stageHosts() {
+      for (const id of SKILL_INSTALL_HOST_IDS) {
+        await focusRow(setup, skillInstallHostLabel(id) + " skills");
+        await press(setup, "space");
+      }
+      await press(setup, "r");
+      await waitForFrame(setup, (value) =>
+        value.includes("Skill-install hosts"),
+      );
+    }
+    async function assertReview() {
+      const viewport = reviewViewport(setup);
+      const leaves = viewport
+        .getChildren()
+        .filter((child) => child instanceof TextRenderable);
+      await act(async () => {
+        viewport.scrollTo({ x: 0, y: 0 });
+        await setup.renderOnce();
+        await setup.waitForVisualIdle();
+      });
+      const content = leaves.map((leaf) => leaf.plainText);
+      for (const destination of destinations)
+        expect(content.join("\n")).toContain(destination);
+      let frames = setup.captureCharFrame();
+      for (let step = 0; step < 80; step++) {
+        await press(setup, "down");
+        frames += "\n" + setup.captureCharFrame();
+      }
+      for (const destination of destinations)
+        expect(compactFrame(frames)).toContain(compactFrame(destination));
+      expect(compactFrame(frames)).toContain("trustexternal");
+      expect(compactFrame(frames)).toContain("Opsxcannotverifyorgrantit.");
+      for (const leaf of leaves)
+        expect(leaf.width).toBe(
+          Math.max(1, viewport.viewport.x + viewport.viewport.width - leaf.x),
+        );
+      expect(leaves.map((leaf) => leaf.plainText)).toEqual(content);
+      // Settled frames must not churn layout or alter the current scroll range.
+      const geometry = [
+        viewport.scrollTop,
+        viewport.scrollHeight,
+        ...leaves.map((leaf) => leaf.width),
+      ];
+      for (let frame = 0; frame < 3; frame++) await setup.renderOnce();
+      expect([
+        viewport.scrollTop,
+        viewport.scrollHeight,
+        ...leaves.map((leaf) => leaf.width),
+      ]).toEqual(geometry);
+      return viewport;
+    }
+    try {
+      await setup.renderOnce();
+      const baseline = setup.renderer.listenerCount("frame");
+      await stageHosts();
+      const first = await assertReview();
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline + 1);
+      const listener = setup.renderer.listeners("frame").at(-1);
+      if (!listener) throw new Error("Missing review width listener");
+      for (const [width, height] of [
+        [100, 32],
+        [60, 18],
+      ]) {
+        await act(async () => {
+          setup.resize(width!, height!);
+          await setup.flush();
+          await setup.renderOnce();
+          await setup.waitForVisualIdle();
+        });
+        await assertReview();
+        expect(setup.renderer.listenerCount("frame")).toBe(baseline + 1);
+        expect(setup.renderer.listeners("frame")).toContain(listener);
+      }
+      await press(setup, "escape");
+      expect(first.isDestroyed).toBe(true);
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline);
+      expect(setup.renderer.listeners("frame")).not.toContain(listener);
+      await press(setup, "r");
+      await assertReview();
+      expect(reviewViewport(setup)).not.toBe(first);
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline + 1);
+      await act(async () => setActive(false));
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline);
+      await act(async () => setActive(true));
+      await press(setup, "r");
+      await assertReview();
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline + 1);
+      await act(async () => setMounted(false));
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline);
+      await act(async () => setMounted(true));
+      await stageHosts();
+      await assertReview();
+      expect(setup.renderer.listenerCount("frame")).toBe(baseline + 1);
       expect((await readdir(root, { recursive: true })).sort()).toEqual(before);
     } finally {
       act(() => setup.renderer.destroy());
