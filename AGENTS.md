@@ -61,7 +61,7 @@ Install checkout dependencies with `bun install --frozen-lockfile`. Run checks f
 | OpenSpec change | `openspec validate <change> --type change --strict`; verify actual task outcomes before marking complete. |
 | Documentation/instructions | Resolve changed links and commands against the current checkout; exercise any documented entrypoint changed by the edit. |
 
-Before opening a PR, run `bun run check`: Biome format/lint, pinned Qlty 0.644.0, TypeScript, application/distribution tests, and bundled-resource checks. Complexity and duplication reports are advisory, not evidence that code is easy to maintain.
+Before opening a PR, run `bun run check`: Biome format/lint, pinned Qlty 0.651.0, TypeScript, application/distribution tests, and bundled-resource checks. Complexity and duplication reports are advisory, not evidence that code is easy to maintain.
 
 Required CI names: `Commit history`, `Quality`, `Application tests`, `Resource checks`, `Package distribution smoke`. See [CI policy](docs/ci.md). Report commands, results, and limitations exactly; a timeout with passing component output is not a verified aggregate exit.
 
