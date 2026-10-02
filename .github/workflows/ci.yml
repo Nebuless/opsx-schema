@@ -72,12 +72,12 @@ jobs:
           bun-version: 1.4.2
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Install Qlty CLI 0.644.0
+      - name: Install Qlty CLI 0.651.0
         shell: bash
         run: |
           archive="$RUNNER_TEMP/qlty.tar.xz"
-          curl --fail --location --silent --show-error "https://github.com/qltysh/qlty/releases/download/v0.644.0/qlty-x86_64-unknown-linux-gnu.tar.xz" --output "$archive"
-          echo "0c080c85c7b13da93956482002e5b02eb943fdd61014ad894b5d47b19982b5c7  $archive" | sha256sum --check
+          curl --fail --location --silent --show-error "https://github.com/qltysh/qlty/releases/download/v0.651.0/qlty-x86_64-unknown-linux-gnu.tar.xz" --output "$archive"
+          echo "b96eaea35490573985fc98b4847e756dc591ea2b8f8de1777108a598fd6f55be  $archive" | sha256sum --check
           member="$(tar -tJf "$archive" | awk '/(^|\/)qlty$/ { member = $0 } END { print member }')"
           test -n "$member"
           tar -xJOf "$archive" "$member" > "$RUNNER_TEMP/qlty"

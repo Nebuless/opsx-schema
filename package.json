@@ -42,7 +42,7 @@
     "check": "bun run format:check && bun run lint && bun run qlty:check && bun run typecheck && bun run test",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "qlty:check": "qlty --version | grep -q '^qlty 0.644.0 ' && qlty check --all --no-formatters && qlty smells --all --quiet --no-snippets",
+    "qlty:check": "qlty --version | grep -q '^qlty 0.651.0 ' && qlty check --all --no-formatters && qlty smells --all --quiet --no-snippets",
     "commitlint": "commitlint --config commitlint.config.js",
     "commitlint:range": "commitlint --config commitlint.config.js",
     "changelog": "conventional-changelog --preset conventionalcommits",
