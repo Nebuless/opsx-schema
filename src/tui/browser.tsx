@@ -2,9 +2,19 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  CodeRenderable,
+  MarkdownRenderable,
+  Renderable,
+  type ScrollBoxRenderable,
+  TextRenderable,
+} from "@opentui/core";
+import {
+  useKeyboard,
+  useRenderer,
+  useTerminalDimensions,
+} from "@opentui/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ScrollBoxRenderable } from "@opentui/core";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import {
   archivedFile,
   archivedRecord,
@@ -13,28 +23,29 @@ import {
   listFiles,
 } from "../archive/index.ts";
 import type { ChangeSummary, DetailedChange } from "../domain/snapshot.ts";
-import { changeHistory } from "../provenance/index.ts";
 import type { ChangeHistory } from "../provenance/index.ts";
+import { changeHistory } from "../provenance/index.ts";
+import { DocumentPreview } from "./document.tsx";
+import type { TaskProgress } from "./model.ts";
+import {
+  boundedPreview,
+  displayFileName,
+  migrationLabel,
+  projectOverview,
+  revisionLabel,
+  safeReadError,
+  selectedIndex,
+  untrackedAdditionDiff,
+  visibleFiles,
+} from "./model.ts";
 import {
   ActionHint,
-  ReviewPanel,
+  registerNumber,
   SectionPanel,
   SelectableRow,
   ViewHeading,
 } from "./presentation.tsx";
-import {
-  boundedPreview,
-  displayFileName,
-  untrackedAdditionDiff,
-  migrationLabel,
-  planningLabel,
-  revisionLabel,
-  safeReadError,
-  selectedIndex,
-  taskLabel,
-  visibleFiles,
-} from "./model.ts";
-import type { TaskProgress } from "./model.ts";
+import { TaskProgressView } from "./progress.tsx";
 import {
   noColorEnabled,
   PendingRead,
@@ -46,6 +57,8 @@ const runFile = promisify(execFile);
 const MAX_GIT_DIFF_BYTES = 256 * 1024;
 
 type BrowserMode = "list" | "detail" | "file";
+type ContentMode = "document" | "source";
+type ReaderMode = ContentMode | "diff";
 type ReadEntry = {
   name: string;
   status?: string;
@@ -80,13 +93,17 @@ function historicalTaskProgress(content: string): TaskProgress {
   let total = 0;
   for (const match of content.matchAll(/^\s*[-*+]\s+\[([ xX])\]/gm)) {
     total++;
-    if (match[1] !== " ") checked++;
+    if (match[1] !== " ") {
+      checked++;
+    }
   }
   return { checked, total, remaining: total - checked };
 }
 
 function wrapIdentity(value: string, maxWidth: number): string {
-  if (value.length <= maxWidth) return value;
+  if (value.length <= maxWidth) {
+    return value;
+  }
   const lines: string[] = [];
   for (let offset = 0; offset < value.length; offset += maxWidth) {
     lines.push(value.slice(offset, offset + maxWidth));
@@ -98,42 +115,52 @@ function scrollSelection(
   scrollbox: ScrollBoxRenderable | null,
   rowId: string,
 ): void {
-  if (!scrollbox || scrollbox.viewport.height <= 0) return;
+  if (!scrollbox || scrollbox.viewport.height <= 0) {
+    return;
+  }
   const child = scrollbox.content.findDescendantById(rowId);
-  if (!child) return;
+  if (!child) {
+    return;
+  }
   const previousScrollTop = scrollbox.scrollTop;
   scrollbox.scrollChildIntoView(rowId);
   if (
     scrollbox.scrollTop !== previousScrollTop ||
     child.height > scrollbox.viewport.height
-  )
+  ) {
     return;
+  }
   const viewportTop = scrollbox.viewport.y;
   const viewportBottom = viewportTop + scrollbox.viewport.height;
   const childBottom = child.y + child.height;
-  if (child.y < viewportTop)
+  if (child.y < viewportTop) {
     scrollbox.scrollBy({ x: 0, y: child.y - viewportTop });
-  else if (childBottom > viewportBottom)
+  } else if (childBottom > viewportBottom) {
     scrollbox.scrollBy({ x: 0, y: childBottom - viewportBottom });
+  }
 }
 
 function scrollContent(
   scrollbox: ScrollBoxRenderable | null,
   key: string,
 ): void {
-  if (!scrollbox) return;
+  if (!scrollbox) {
+    return;
+  }
   const page = Math.max(1, scrollbox.viewport.height - 1);
-  if (key === "up" || key === "arrowup" || key === "k")
+  if (key === "up" || key === "arrowup" || key === "k") {
     scrollbox.scrollBy({ x: 0, y: -1 });
-  else if (key === "down" || key === "arrowdown" || key === "j")
+  } else if (key === "down" || key === "arrowdown" || key === "j") {
     scrollbox.scrollBy({ x: 0, y: 1 });
-  else if (key === "pageup" || key === "pgup")
+  } else if (key === "pageup" || key === "pgup") {
     scrollbox.scrollBy({ x: 0, y: -page });
-  else if (key === "pagedown" || key === "pgdn")
+  } else if (key === "pagedown" || key === "pgdn") {
     scrollbox.scrollBy({ x: 0, y: page });
-  else if (key === "home") scrollbox.scrollTo({ x: 0, y: 0 });
-  else if (key === "end")
+  } else if (key === "home") {
+    scrollbox.scrollTo({ x: 0, y: 0 });
+  } else if (key === "end") {
     scrollbox.scrollTo({ x: 0, y: scrollbox.scrollHeight });
+  }
 }
 
 async function readDiff(
@@ -282,13 +309,112 @@ function isPlanningArtifact(file: string): boolean {
   );
 }
 
-function historicalTasksLabel(tasks: HistoricalTasks): string {
-  if (tasks.status === "not-found") return "Unknown (no archived tasks.md)";
-  if (tasks.status === "error") return "Unavailable (" + tasks.message + ")";
-  return tasks.progress.total === 0
-    ? "No checklist tasks retained"
-    : taskLabel(tasks.progress);
+function ProgressContext({
+  archived,
+  detail,
+  activeDetail,
+  transitionKey,
+}: {
+  archived: boolean;
+  detail: Detail | null;
+  activeDetail: ActiveDetail;
+  transitionKey: string;
+}) {
+  const loaded =
+    activeDetail.status === "loaded"
+      ? projectOverview([activeDetail.value]).activeChanges[0]!
+      : null;
+  const historical = detail?.historicalTasks;
+  const pending = archived
+    ? detail === null
+    : activeDetail.status === "pending";
+  const failure = archived
+    ? (detail?.error ??
+      (historical?.status === "error" ? historical.message : null))
+    : activeDetail.status === "error"
+      ? activeDetail.message
+      : null;
+  return (
+    <box flexDirection="column" flexShrink={0} width="100%">
+      {pending ? (
+        <PendingRead
+          label={
+            archived ? "Historical tasks: Loading..." : "Tasks: Loading..."
+          }
+        />
+      ) : failure ? (
+        <text wrapMode="char" fg={tuiTextColor("error", noColorEnabled())}>
+          {archived ? "Historical tasks" : "Tasks"}: Unavailable · {failure}
+        </text>
+      ) : (
+        <TaskProgressView
+          progress={
+            archived
+              ? historical?.status === "loaded"
+                ? historical.progress
+                : null
+              : (loaded?.tasks ?? null)
+          }
+          historical={archived}
+          compact
+          cells={6}
+          transitionKey={transitionKey}
+        />
+      )}
+      <text wrapMode="char" fg={tuiTextColor("muted", noColorEnabled())}>
+        {archived
+          ? "Historical planning: Unknown"
+          : pending
+            ? "Planning: Loading..."
+            : failure
+              ? "Planning: Unavailable"
+              : loaded?.planning.complete === null
+                ? "Planning: Unknown"
+                : `Planning: ${loaded?.planning.ready}/${loaded?.planning.total} artifacts ready`}
+      </text>
+    </box>
+  );
 }
+
+// Native percentage text widths can retain the pre-scrollbar width while Yoga
+// measures height against the narrower viewport. Bind only reader text leaves
+// to their settled clipping edge; native resize callbacks still own the range.
+function fitReaderPreview(scroll: ScrollBoxRenderable | null) {
+  if (!scroll || scroll.viewport.width < 1) return;
+  const fit = (node: Renderable, right: number) => {
+    if (
+      node instanceof CodeRenderable ||
+      (node instanceof TextRenderable && node.id === "reader-source-preview")
+    ) {
+      const available = Math.max(1, right - node.x);
+      if (node.width !== available) node.width = available;
+    }
+    const childRight = Math.min(right, node.x + node.width);
+    for (const child of node.getChildren()) {
+      if (child instanceof Renderable) fit(child, childRight);
+    }
+  };
+  const right = scroll.viewport.x + scroll.viewport.width;
+  for (const child of scroll.getChildren()) {
+    if (
+      child instanceof MarkdownRenderable ||
+      (child instanceof TextRenderable && child.id === "reader-source-preview")
+    ) {
+      fit(child, right);
+    }
+  }
+}
+
+type IdentifiedRead<T> = { identity: string; value: T };
+const PENDING_ACTIVE_DETAIL: ActiveDetail = { status: "pending" };
+const PENDING_FILE_VIEW: FileView = {
+  loading: true,
+  error: null,
+  label: null,
+  content: null,
+  patch: null,
+  truncated: false,
+};
 
 function ReadOnlyBrowser({
   title,
@@ -310,6 +436,7 @@ function ReadOnlyBrowser({
   viewportHeight?: number;
 }) {
   const { width, height } = useTerminalDimensions();
+  const renderer = useRenderer();
   const wideLayout = width >= 75;
   // Dashboard supplies the exact content height; direct renders reserve the same shell rows.
   const browserHeight = Math.max(
@@ -329,19 +456,25 @@ function ReadOnlyBrowser({
     null,
   );
   const [detailFocus, setDetailFocus] = useState<"summary" | "files">("files");
-  const [showDiff, setShowDiff] = useState(false);
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const [activeDetail, setActiveDetail] = useState<ActiveDetail>({
-    status: "pending",
-  });
-  const [fileView, setFileView] = useState<FileView>({
-    loading: false,
-    error: null,
-    label: null,
-    content: null,
-    patch: null,
-    truncated: false,
-  });
+  const [contentMode, setContentMode] = useState<ContentMode>("source");
+  const [readerMode, setReaderMode] = useState<ReaderMode>("source");
+  const showDiff = readerMode === "diff";
+  const contextOpen = mode !== "list";
+  const contextIdentity = JSON.stringify([root, selectedName, refreshVersion]);
+  const [detailRead, setDetailRead] = useState<IdentifiedRead<Detail> | null>(
+    null,
+  );
+  const detail =
+    detailRead?.identity === contextIdentity ? detailRead.value : null;
+  const [activeRead, setActiveRead] =
+    useState<IdentifiedRead<ActiveDetail> | null>(null);
+  const activeDetail =
+    activeRead?.identity === contextIdentity
+      ? activeRead.value
+      : PENDING_ACTIVE_DETAIL;
+  const [fileRead, setFileRead] = useState<IdentifiedRead<FileView> | null>(
+    null,
+  );
   const listScroll = useRef<ScrollBoxRenderable>(null);
   const summaryScroll = useRef<ScrollBoxRenderable>(null);
   const filesScroll = useRef<ScrollBoxRenderable>(null);
@@ -364,7 +497,7 @@ function ReadOnlyBrowser({
     detailFocus === "files"
       ? "j/k files · Enter read · m summary · Esc list"
       : "j/k scroll · f files · Esc list";
-  const fileActionHint = "j/k scroll · d diff/content · Esc detail";
+
   const selectedListIndex = visibleEntries.findIndex(
     (entry) => entry.name === listSelectionName,
   );
@@ -377,7 +510,41 @@ function ReadOnlyBrowser({
   const selectedFileIndex =
     detail?.files.indexOf(fileSelectionName ?? "") ?? -1;
   const fileCursor = selectedFileIndex < 0 ? 0 : selectedFileIndex;
-  const selectedFile = detail?.files[fileCursor] ?? null;
+  // Only settled detail inventory is actionable; a pending refresh or open
+  // reader retains its requested identity even if that file disappears.
+  const selectedFile =
+    mode === "detail" && detail !== null
+      ? (detail.files[fileCursor] ?? null)
+      : (fileSelectionName ?? detail?.files[fileCursor] ?? null);
+  const fileIdentityKey = JSON.stringify([
+    contextIdentity,
+    selectedFile,
+    showDiff,
+  ]);
+  const fileView =
+    fileRead?.identity === fileIdentityKey ? fileRead.value : PENDING_FILE_VIEW;
+  const markdownFile = /\.(md|markdown)$/i.test(selectedFile ?? "");
+  const fileActionHint = markdownFile
+    ? "j/k scroll · m source/document · d diff · Esc detail"
+    : "j/k scroll · d diff/source · Esc detail";
+  const readerModes = (
+    markdownFile ? ["document", "source", "diff"] : ["source", "diff"]
+  )
+    .map((name) => {
+      const label = name[0]!.toUpperCase() + name.slice(1);
+      return readerMode === name ? "[" + label + "]" : label;
+    })
+    .join(" / ");
+  const fileIdentity = displayFileName(
+    (selectedName ?? "Unknown") + "/" + (selectedFile ?? "Unknown file"),
+  );
+  const readerIdentityLimit = Math.max(12, width - 6);
+  const readerIdentity =
+    fileIdentity.length > readerIdentityLimit
+      ? fileIdentity.slice(0, Math.floor(readerIdentityLimit / 2) - 1) +
+        "…" +
+        fileIdentity.slice(-Math.ceil(readerIdentityLimit / 2))
+      : fileIdentity;
   const selectedChange =
     activeDetail.status === "loaded" ? activeDetail.value : null;
   const history = archived
@@ -427,24 +594,56 @@ function ReadOnlyBrowser({
   }, [filtering]);
 
   useEffect(() => {
-    if (mode === "list")
+    if (mode === "list") {
       scrollSelection(listScroll.current, "browser-list-row-" + visibleCursor);
+    }
   }, [browserHeight, mode, visibleCursor, visibleEntries, width]);
 
   useEffect(() => {
-    if (mode === "detail")
-      scrollSelection(filesScroll.current, "browser-file-row-" + fileCursor);
-  }, [browserHeight, detail?.files, detailFocus, fileCursor, mode, width]);
+    if (mode === "list" || (mode === "file" && readerMode === "diff")) {
+      return;
+    }
+    const settleViewport = () => {
+      if (mode === "detail") {
+        scrollSelection(filesScroll.current, "browser-file-row-" + fileCursor);
+      } else {
+        fitReaderPreview(fileContentScroll.current);
+      }
+    };
+    settleViewport();
+    // Native frame follows complete layout/paint. Never shadow onSizeChange:
+    // native callbacks keep scroll ranges correct on remount, wrap and resize.
+    renderer.on("frame", settleViewport);
+    return () => {
+      renderer.off("frame", settleViewport);
+    };
+  }, [
+    browserHeight,
+    detail?.files,
+    detailFocus,
+    fileCursor,
+    mode,
+    readerMode,
+    renderer,
+    width,
+  ]);
 
   useKeyboard((event) => {
     const key = event.name.toLowerCase();
     if (mode === "file") {
       if (isEscape(key)) {
         setMode("detail");
-        setShowDiff(false);
         setDetailFocus("files");
-      } else if (key === "d") setShowDiff((current) => !current);
-      else scrollContent(fileContentScroll.current, key);
+      } else if (key === "d") {
+        setReaderMode((current) => (current === "diff" ? contentMode : "diff"));
+      } else if (key === "m" && markdownFile) {
+        const nextContentMode =
+          contentMode === "document" ? "source" : "document";
+        setContentMode(nextContentMode);
+        setReaderMode(nextContentMode);
+      } else {
+        scrollContent(fileContentScroll.current, key);
+      }
       return;
     }
     if (mode === "detail") {
@@ -465,18 +664,23 @@ function ReadOnlyBrowser({
         return;
       }
       if (key === "up" || key === "arrowup" || key === "k") {
-        if (detail?.files.length)
+        if (detail?.files.length) {
           setFileSelectionName(
             detail.files[selectedIndex(fileCursor - 1, detail.files.length)]!,
           );
+        }
       } else if (key === "down" || key === "arrowdown" || key === "j") {
-        if (detail?.files.length)
+        if (detail?.files.length) {
           setFileSelectionName(
             detail.files[selectedIndex(fileCursor + 1, detail.files.length)]!,
           );
+        }
       } else if (isEnter(key) && selectedFile) {
+        setFileSelectionName(selectedFile);
+        const initialMode = markdownFile ? "document" : "source";
+        setContentMode(initialMode);
+        setReaderMode(initialMode);
         setMode("file");
-        setShowDiff(false);
       }
       return;
     }
@@ -484,34 +688,47 @@ function ReadOnlyBrowser({
       if (isEscape(key)) {
         setQuery("");
         setFiltering(false);
-      } else if (isEnter(key)) setFiltering(false);
+      } else if (isEnter(key)) {
+        setFiltering(false);
+      }
       return;
     }
     if (isEscape(key)) {
-      if (query) setQuery("");
-    } else if (key === "/" || key === "slash") setFiltering(true);
-    else if (key === "up" || key === "arrowup" || key === "k") {
+      if (query) {
+        setQuery("");
+      }
+    } else if (key === "/" || key === "slash") {
+      setFiltering(true);
+    } else if (key === "up" || key === "arrowup" || key === "k") {
       const entry =
         visibleEntries[selectedIndex(visibleCursor - 1, visibleEntries.length)];
-      if (entry) setListSelectionName(entry.name);
+      if (entry) {
+        setListSelectionName(entry.name);
+      }
     } else if (key === "down" || key === "arrowdown" || key === "j") {
       const entry =
         visibleEntries[selectedIndex(visibleCursor + 1, visibleEntries.length)];
-      if (entry) setListSelectionName(entry.name);
+      if (entry) {
+        setListSelectionName(entry.name);
+      }
     } else if (isEnter(key) && selectedListEntry) {
       setListSelectionName(selectedListEntry.name);
       setSelectedName(selectedListEntry.name);
       setFileSelectionName(null);
       setMode("detail");
       setDetailFocus("files");
-      setDetail(null);
-      setActiveDetail({ status: "pending" });
+      setDetailRead(null);
+      setActiveRead(null);
     }
   });
 
   useEffect(() => {
-    if (mode !== "detail" || !selectedEntry) return;
+    if (!contextOpen || !selectedEntry) {
+      return;
+    }
     let current = true;
+    const setDetail = (value: Detail) =>
+      setDetailRead({ identity: contextIdentity, value });
     const load = async () => {
       try {
         if (archived) {
@@ -550,7 +767,7 @@ function ReadOnlyBrowser({
               };
             }
           }
-          if (current)
+          if (current) {
             setDetail({
               files,
               history: changeHistoryValue,
@@ -558,6 +775,7 @@ function ReadOnlyBrowser({
               error: null,
               historicalTasks,
             });
+          }
         } else {
           const directory = await changeDirectory(
             root,
@@ -565,7 +783,7 @@ function ReadOnlyBrowser({
             false,
           );
           const files = visibleFiles(await listFiles(directory));
-          if (current)
+          if (current) {
             setDetail({
               files,
               history: null,
@@ -573,9 +791,10 @@ function ReadOnlyBrowser({
               error: null,
               historicalTasks: { status: "not-found" },
             });
+          }
         }
       } catch (error) {
-        if (current)
+        if (current) {
           setDetail({
             files: [],
             history: null,
@@ -583,18 +802,23 @@ function ReadOnlyBrowser({
             error: safeReadError(error),
             historicalTasks: { status: "not-found" },
           });
+        }
       }
     };
     void load();
     return () => {
       current = false;
     };
-  }, [archived, mode, refreshVersion, root, selectedEntry?.name]);
+  }, [archived, contextOpen, contextIdentity, root, selectedEntry?.name]);
 
   useEffect(() => {
-    if (archived || mode !== "detail" || !selectedEntry) return;
+    if (archived || !contextOpen || !selectedEntry) {
+      return;
+    }
     let current = true;
-    setActiveDetail({ status: "pending" });
+    const setActiveDetail = (value: ActiveDetail) =>
+      setActiveRead({ identity: contextIdentity, value });
+    setActiveDetail(PENDING_ACTIVE_DETAIL);
     if (!loadChangeDetail) {
       setActiveDetail({
         status: "error",
@@ -606,20 +830,36 @@ function ReadOnlyBrowser({
     }
     void loadChangeDetail(selectedEntry.name)
       .then((value) => {
-        if (current) setActiveDetail({ status: "loaded", value });
+        if (value.name !== selectedEntry.name) {
+          throw new Error("Selected detail identity mismatch.");
+        }
+        if (current) {
+          setActiveDetail({ status: "loaded", value });
+        }
       })
       .catch((error) => {
-        if (current)
+        if (current) {
           setActiveDetail({ status: "error", message: safeReadError(error) });
+        }
       });
     return () => {
       current = false;
     };
-  }, [archived, loadChangeDetail, mode, refreshVersion, selectedEntry?.name]);
+  }, [
+    archived,
+    loadChangeDetail,
+    contextOpen,
+    contextIdentity,
+    selectedEntry?.name,
+  ]);
 
   useEffect(() => {
-    if (mode !== "file" || !selectedEntry || !selectedFile) return;
+    if (mode !== "file" || !selectedEntry || !selectedFile) {
+      return;
+    }
     let current = true;
+    const setFileView = (value: FileView) =>
+      setFileRead({ identity: fileIdentityKey, value });
     setFileView({
       loading: true,
       error: null,
@@ -637,7 +877,7 @@ function ReadOnlyBrowser({
             selectedFile,
             archived,
           );
-          if (current)
+          if (current) {
             setFileView({
               loading: false,
               error: null,
@@ -646,15 +886,16 @@ function ReadOnlyBrowser({
               patch: diffResult.patch,
               truncated: diffResult.truncated,
             });
+          }
         } else {
-          const result = archived
+          const fileRead = archived
             ? await archivedFile(root, selectedEntry.name, selectedFile)
             : await boundedFile(
                 await changeDirectory(root, selectedEntry.name, false),
                 selectedFile,
               );
-          const preview = boundedPreview(result.content);
-          if (current)
+          const preview = boundedPreview(fileRead.content);
+          if (current) {
             setFileView({
               loading: false,
               error: null,
@@ -663,9 +904,10 @@ function ReadOnlyBrowser({
               patch: null,
               truncated: preview.truncated,
             });
+          }
         }
       } catch (error) {
-        if (current)
+        if (current) {
           setFileView({
             loading: false,
             error: safeReadError(error),
@@ -674,17 +916,28 @@ function ReadOnlyBrowser({
             patch: null,
             truncated: false,
           });
+        }
       }
     };
     void load();
     return () => {
       current = false;
     };
-  }, [archived, mode, root, selectedEntry?.name, selectedFile, showDiff]);
+  }, [
+    archived,
+    mode,
+    root,
+    selectedEntry?.name,
+    selectedFile,
+    showDiff,
+    fileIdentityKey,
+  ]);
 
   useEffect(() => {
-    if (mode === "file") fileContentScroll.current?.scrollTo({ x: 0, y: 0 });
-  }, [mode, selectedFile, showDiff]);
+    if (mode === "file") {
+      fileContentScroll.current?.scrollTo({ x: 0, y: 0 });
+    }
+  }, [mode, selectedFile, readerMode]);
 
   return (
     <box
@@ -724,8 +977,8 @@ function ReadOnlyBrowser({
                 title={
                   wideLayout
                     ? archived
-                      ? "Archived records"
-                      : "Active changes"
+                      ? "HISTORY / ARCHIVED RECORDS"
+                      : "ACTIVE / WORK IN PROGRESS"
                     : title + " / List"
                 }
                 state={
@@ -794,6 +1047,8 @@ function ReadOnlyBrowser({
                         key={entry.name}
                         id={"browser-list-row-" + index}
                         label={
+                          registerNumber(index) +
+                          "  " +
                           entry.name +
                           (entry.status ? " - " + entry.status : "") +
                           (entry.schema ? " - schema " + entry.schema : "")
@@ -831,12 +1086,15 @@ function ReadOnlyBrowser({
                         >
                           {selectedListEntry.name}
                         </text>
-                        <text wrapMode="word">
-                          Status:{" "}
-                          {archived
-                            ? "Archived (historical; not active)"
-                            : (selectedListEntry.status ?? "Unknown")}
-                        </text>
+                        <text
+                          wrapMode="word"
+                          content={
+                            "Status: " +
+                            (archived
+                              ? "Archived"
+                              : (selectedListEntry.status ?? "Unknown"))
+                          }
+                        />
                         {archived ? (
                           <text wrapMode="word">
                             Schema provenance: inspect detail for retained
@@ -946,6 +1204,12 @@ function ReadOnlyBrowser({
                         )}
                       </text>
                     )}
+                    <ProgressContext
+                      archived={archived}
+                      detail={detail}
+                      activeDetail={activeDetail}
+                      transitionKey={selectedName ?? ""}
+                    />
                     {archived ? (
                       <>
                         <text fg={tuiTextColor("pending", colorDisabled)}>
@@ -1030,32 +1294,6 @@ function ReadOnlyBrowser({
                     )}
                     {!archived && selectedChange && (
                       <>
-                        <text wrapMode="word">
-                          {planningLabel({
-                            ready: selectedChange.artifacts.filter(
-                              (artifact) => artifact.status === "done",
-                            ).length,
-                            total: selectedChange.artifacts.length,
-                            complete:
-                              selectedChange.artifacts.length === 0
-                                ? null
-                                : selectedChange.artifacts.every(
-                                    (artifact) => artifact.status === "done",
-                                  ),
-                          })}
-                        </text>
-                        <text width="100%" wrapMode="word">
-                          Implementation task progress:{" "}
-                          {taskLabel(
-                            selectedChange.tasks
-                              ? {
-                                  checked: selectedChange.tasks.complete,
-                                  total: selectedChange.tasks.total,
-                                  remaining: selectedChange.tasks.remaining,
-                                }
-                              : null,
-                          )}
-                        </text>
                         <text>
                           Revision integrity:{" "}
                           {selectedChange.revision?.state ?? "Unknown"}
@@ -1073,14 +1311,6 @@ function ReadOnlyBrowser({
                               : "artifact status unavailable; " +
                                 planningFiles +
                                 " planning files retained"}
-                        </text>
-                        <text wrapMode="word">
-                          Historical task progress:{" "}
-                          {detail === null
-                            ? "Loading..."
-                            : detail.error
-                              ? "Unknown (file list failed)"
-                              : historicalTasksLabel(detail.historicalTasks)}
                         </text>
                       </>
                     )}
@@ -1164,16 +1394,36 @@ function ReadOnlyBrowser({
       {mode === "file" && (
         <>
           <ViewHeading
-            title={showDiff ? "File | diff" : "File | content"}
-            context={title}
-            state={archived ? "HISTORICAL RO" : "READ ONLY"}
-          />
-          <ReviewPanel
-            title={showDiff ? "Git diff" : "File content"}
+            title={title + " | File"}
             state={archived ? "HISTORICAL · READ ONLY" : "READ ONLY"}
-            tone={fileView.error ? "error" : "accent"}
+          />
+          <box
+            flexDirection="column"
+            width="100%"
+            flexGrow={1}
+            minHeight={0}
+            paddingLeft={1}
+            paddingRight={1}
           >
+            <text flexShrink={0} wrapMode="char">
+              {readerModes}
+            </text>
+            <text flexShrink={0} wrapMode="char">
+              {readerIdentity}
+            </text>
+            <ProgressContext
+              archived={archived}
+              detail={detail}
+              activeDetail={activeDetail}
+              transitionKey={selectedName ?? ""}
+            />
+            {fileView.truncated && (
+              <text flexShrink={0} fg={tuiTextColor("pending", colorDisabled)}>
+                Preview truncated at the safe display limit.
+              </text>
+            )}
             <scrollbox
+              key={readerMode}
               ref={fileContentScroll}
               width="100%"
               flexBasis={0}
@@ -1182,10 +1432,6 @@ function ReadOnlyBrowser({
               minHeight={0}
               focused
             >
-              <text flexShrink={0} wrapMode="char">
-                {selectedName ?? "Unknown"}/
-                {selectedFile ? displayFileName(selectedFile) : "Unknown file"}
-              </text>
               {showDiff && fileView.label && <text>{fileView.label}</text>}
               {fileView.loading ? (
                 <PendingRead
@@ -1207,17 +1453,29 @@ function ReadOnlyBrowser({
               ) : fileView.content === "" ? (
                 <text>File is empty.</text>
               ) : fileView.content !== null ? (
-                <text wrapMode="char">{fileView.content}</text>
+                readerMode === "document" ? (
+                  <DocumentPreview
+                    key={selectedFile}
+                    content={fileView.content}
+                    noColor={colorDisabled}
+                  />
+                ) : (
+                  <text
+                    id={
+                      readerMode === "source"
+                        ? "reader-source-preview"
+                        : undefined
+                    }
+                    wrapMode="char"
+                  >
+                    {fileView.content}
+                  </text>
+                )
               ) : (
                 <text>Waiting for file content...</text>
               )}
-              {fileView.truncated && (
-                <text fg={tuiTextColor("pending", colorDisabled)}>
-                  Preview truncated at the safe display limit.
-                </text>
-              )}
             </scrollbox>
-          </ReviewPanel>
+          </box>
           <ActionHint>{fileActionHint}</ActionHint>
         </>
       )}
@@ -1262,6 +1520,7 @@ export function Changes({
 
 export interface ArchiveProps {
   root: string;
+  refreshVersion?: number;
   records: readonly { name: string }[];
   onFilterEditingChange?: (editing: boolean) => void;
   viewportHeight?: number;
@@ -1270,6 +1529,7 @@ export interface ArchiveProps {
 export function Archive({
   root,
   records,
+  refreshVersion,
   onFilterEditingChange,
   viewportHeight,
 }: ArchiveProps) {
@@ -1278,6 +1538,7 @@ export function Archive({
       title="Archive"
       root={root}
       entries={records.map((record) => ({ name: record.name }))}
+      refreshVersion={refreshVersion}
       archived
       onFilterEditingChange={onFilterEditingChange}
       viewportHeight={viewportHeight}

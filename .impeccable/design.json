@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-30T18:22:48.986Z",
+  "title": "Design System: Opsx Change Register",
+  "extensions": {
+    "motion": [
+      {
+        "name": "known-task-progress",
+        "value": "260ms",
+        "purpose": "Animate only known task progress changes; static under NO_COLOR or REDUCED_MOTION."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "stacked-terminal",
+        "value": "75 columns"
+      }
+    ]
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "Change Register",
+    "overview": "A terminal change-control register separating active work, checked tasks and historical records.",
+    "keyCharacteristics": [
+      "Numbered records",
+      "Separate active and history fields",
+      "Task-first exact counts and independent planning",
+      "Explicit unknown, pending, failed and zero-task states",
+      "Single context-preserving Document, Source and Diff reader"
+    ],
+    "dos": [
+      "Lead with exact checked tasks and remaining work, then independent planning.",
+      "Keep keyboard focus visible without color."
+    ],
+    "donts": [
+      "Do not invent progress for unknown totals.",
+      "Do not write from Changes or Archive."
+    ]
+  }
+}

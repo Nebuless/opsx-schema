@@ -47,7 +47,20 @@ opsx-schema [--project <root>]                 # open the dashboard on a usable 
 opsx-schema --help
 ```
 
-Without `--project`, project commands resolve the nearest OpenSpec project. `--project <root>` selects an exact project root. Put global options before the command, as in the usage line. Bare invocation starts the dashboard only in a usable interactive TTY; a non-TTY bare invocation fails with `TTY_REQUIRED` and a non-zero exit instead of writing terminal control sequences into an agent pipe. Use explicit commands for noninteractive work. The dashboard has Overview, Changes, Archive and Settings tabs; Overview, Changes and Archive are read-only, while Settings stages guarded changes.
+Without `--project`, project commands resolve the nearest OpenSpec project. `--project <root>` selects an exact project root. Put global options before the command, as in the usage line. Bare invocation starts the dashboard only in a usable interactive TTY; a non-TTY bare invocation fails with `TTY_REQUIRED` and a non-zero exit instead of writing terminal control sequences into an agent pipe. Use explicit commands for noninteractive work. The dashboard has Overview, Changes, Archive and Settings tabs; Overview, Changes and Archive are read-only, while Settings stages guarded changes. Overview uses a Change Register: active work and archived history have separate sections; planning readiness and checked tasks are separate measures. Unknown totals have no progress bar. `NO_COLOR=1` and `REDUCED_MOTION=1` keep loading indicators static.
+
+### Reading in the dashboard
+
+Changes and Archive browse retained files without changing their contents. Markdown files (`.md` or `.markdown`, case-insensitive) open in Document mode; other files open in Source. Document and Source use the same sanitized preview, bounded to 12,000 characters and 120 lines after the existing 1 MiB file-read guard. Formatting does not fetch remote resources, open links or make checkboxes editable. A rendering limitation leaves safe Source available.
+
+- In a file reader, `m` switches Document/Source, including from Diff. `d` switches Diff and the remembered content mode. Opening another file resets its mode and scroll position.
+- In details, `m` still focuses the summary and `f` returns to files. `j`/`k` and arrows select files or scroll the focused region. Page Up/Down and Home/End scroll content. `Esc` returns from reader to the retained file selection, then to the retained item/filter. If a selected file disappears during a settled detail refresh, Enter opens the currently highlighted available file. An already-open reader keeps its requested file identity and reports a refusal instead of silently switching files.
+- Tab/Shift+Tab, `1`–`4` and `?` remain global view/help keys while browsing. A filter or text editor owns ordinary typing instead.
+- The reader keeps its mode, compact file identity, read-only/historical status, task counts and truncation notice outside the scrolling document. Full identity and provenance remain reachable in details. Native text wrapping follows the settled viewport width after scrollbar changes and resize, keeping the retained bounded suffix readable at End.
+
+Task counts lead Overview, active details and reader context with exact checked/total and remaining tasks. Planning readiness follows independently. Loading and failed context reads are distinct from Unknown and a successful `0/0` read, which shows “No checklist tasks” without a track. Only exact completion can fill a progress track; `99/100` remains incomplete. Archive counts are labeled historical and do not imply current planning readiness. Selected reads remain identified and cancellable through reader transitions and project refresh.
+
+`NO_COLOR=1` and `REDUCED_MOTION=1` keep progress and loading static. Otherwise, only changed known task counts animate; unchanged data and newly known counts do not invent a transition.
 
 Default CLI output is compact TOON, with one response envelope. Add global `--json` before the command for one JSON envelope with `schemaVersion: 1`; it does not authorize a mutation or change the result. A successful JSON command has this shape:
 

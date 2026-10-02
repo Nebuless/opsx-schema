@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { useTerminalDimensions, useTimeline } from "@opentui/react";
+import { useTerminalDimensions } from "@opentui/react";
 import type { ChangeSummary, SpecificationCounts } from "../domain/snapshot.ts";
-import { planningLabel, projectOverview, taskLabel } from "./model.ts";
+import { planningLabel, projectOverview } from "./model.ts";
 import type { ReadState } from "./model.ts";
-import { SectionPanel, ViewHeading } from "./presentation.tsx";
+import { registerNumber, SectionPanel, ViewHeading } from "./presentation.tsx";
+import { TaskProgressView } from "./progress.tsx";
 import {
   noColorEnabled,
   PendingRead,
@@ -18,115 +18,6 @@ export interface OverviewProps {
   reducedMotion?: boolean;
   noColor?: boolean;
   viewportHeight?: number;
-}
-
-function progressBar(ratio: number, cells: number): string {
-  const filled = Math.max(0, Math.min(cells, Math.round(ratio * cells)));
-  return `[${"=".repeat(filled)}${"-".repeat(cells - filled)}]`;
-}
-
-function AnimatedProgress({
-  label,
-  value: labelValue,
-  from,
-  to,
-  cells,
-  noColor,
-}: {
-  label: string;
-  value: string;
-  from: number;
-  to: number;
-  cells: number;
-  noColor: boolean;
-}) {
-  const [value, setValue] = useState(from);
-  const initial = useRef(from);
-  const timeline = useTimeline({ duration: 260, autoplay: false });
-
-  useEffect(() => {
-    const start = initial.current;
-    if (start === to || progressBar(start, cells) === progressBar(to, cells)) {
-      setValue(to);
-      return;
-    }
-    const target = { value: start };
-    timeline.add(target, {
-      value: to,
-      duration: 260,
-      ease: "outQuad",
-      onUpdate: ({ targets }) => setValue(targets[0].value),
-    });
-    timeline.play();
-    return () => {
-      timeline.pause();
-    };
-  }, [cells, timeline, to]);
-
-  return (
-    <text
-      selectable={false}
-      wrapMode="char"
-      fg={tuiTextColor(to === 1 ? "success" : "accent", noColor)}
-    >
-      {label}: {labelValue} {progressBar(value, cells)}
-    </text>
-  );
-}
-
-function ProgressLine({
-  label,
-  value,
-  ratio,
-  transitionKey,
-  animate,
-  cells,
-  noColor,
-}: {
-  label: string;
-  value: string;
-  ratio: number | null;
-  transitionKey: string;
-  animate: boolean;
-  cells: number;
-  noColor: boolean;
-}) {
-  const previous = useRef({ transitionKey, ratio });
-  const start =
-    previous.current.transitionKey === transitionKey
-      ? (ratio ?? 0)
-      : (previous.current.ratio ?? ratio ?? 0);
-
-  useEffect(() => {
-    previous.current = { transitionKey, ratio };
-  }, [ratio, transitionKey]);
-
-  if (ratio !== null && animate) {
-    return (
-      <AnimatedProgress
-        key={transitionKey}
-        label={label}
-        value={value}
-        from={start}
-        to={ratio}
-        cells={cells}
-        noColor={noColor}
-      />
-    );
-  }
-  return (
-    <text
-      selectable={false}
-      wrapMode="char"
-      fg={tuiTextColor(
-        ratio === 1 ? "success" : ratio === null ? "muted" : "accent",
-        noColor,
-      )}
-    >
-      {label}: {value}
-      {ratio === null ? "" : " " + progressBar(ratio, cells)}
-    </text>
-  );
 }
 
 export function Overview({
@@ -162,7 +53,6 @@ export function Overview({
         : "Ready";
   const motionReduced = reducedMotionEnabled(reducedMotion);
   const colorDisabled = noColorEnabled(noColorOverride);
-  const animate = !motionReduced && !colorDisabled;
   const progressCells = Math.max(4, Math.min(16, Math.floor((width - 36) / 4)));
   const compactProgress = width < 75;
   const activeSectionState =
@@ -188,15 +78,15 @@ export function Overview({
   const planningComplete = model?.planningComplete ?? 0;
   const planningTotal = model?.planningTotal ?? 0;
   const planningKnown = planningTotal > 0;
-  const aggregateTasks =
-    model?.taskProgress && model.taskProgress.total > 0
-      ? model.taskProgress
-      : null;
+  const aggregateTasks = model?.taskProgress ?? null;
   const visibleRows = Math.max(1, (viewportHeight ?? height) - 1);
 
   return (
     <box flexDirection="column" width="100%" flexGrow={1} minHeight={0} gap={0}>
-      <ViewHeading title="Overview" state={overviewReadiness} />
+      <ViewHeading
+        title="CHANGE REGISTER / OVERVIEW"
+        state={overviewReadiness}
+      />
       <scrollbox
         width="100%"
         style={{
@@ -207,7 +97,7 @@ export function Overview({
         }}
         focused
       >
-        <SectionPanel title="Summary" tone="accent">
+        <SectionPanel title="REGISTER TOTALS" tone="accent" clipSafe>
           {specifications.status === "pending" ? (
             <PendingRead
               label="Loading specification metrics…"
@@ -225,55 +115,48 @@ export function Overview({
               Requirements: {specifications.value.requirements}
             </text>
           )}
-          <ProgressLine
-            label={compactProgress ? "Planning" : "Planning readiness"}
-            value={
-              planningKnown
-                ? compactProgress
-                  ? planningComplete + "/" + planningTotal + " changes"
-                  : planningComplete +
-                    "/" +
-                    planningTotal +
-                    " of changes with planning artifacts"
-                : "Unknown"
-            }
-            ratio={planningKnown ? planningComplete / planningTotal : null}
-            transitionKey={
-              planningKnown
-                ? "planning:" + planningComplete + "/" + planningTotal
-                : "planning:unknown"
-            }
-            animate={animate && planningKnown}
-            cells={progressCells}
-            noColor={colorDisabled}
-          />
-          <ProgressLine
-            label={compactProgress ? "Tasks" : "Task progress"}
-            value={
-              aggregateTasks
-                ? compactProgress
-                  ? aggregateTasks.checked + "/" + aggregateTasks.total
-                  : taskLabel(aggregateTasks)
-                : "Unknown"
-            }
-            ratio={
-              aggregateTasks
-                ? aggregateTasks.checked / aggregateTasks.total
-                : null
-            }
-            transitionKey={
-              aggregateTasks
-                ? "tasks:" + aggregateTasks.checked + "/" + aggregateTasks.total
-                : "tasks:unknown"
-            }
-            animate={animate && aggregateTasks !== null}
-            cells={progressCells}
-            noColor={colorDisabled}
-          />
+          {activeChanges.status === "pending" ? (
+            <PendingRead
+              label={
+                compactProgress ? "Tasks: Loading…" : "Task progress: Loading…"
+              }
+              noColor={colorDisabled}
+              reducedMotion={motionReduced}
+            />
+          ) : activeChanges.status === "error" ? (
+            <text wrapMode="char" fg={tuiTextColor("error", colorDisabled)}>
+              Task progress unavailable: {activeChanges.message}
+            </text>
+          ) : (
+            <TaskProgressView
+              progress={aggregateTasks}
+              compact={compactProgress}
+              cells={progressCells}
+              noColor={colorDisabled}
+              reducedMotion={motionReduced}
+              transitionKey="overview-total"
+            />
+          )}
+          <text wrapMode="char" fg={tuiTextColor("muted", colorDisabled)}>
+            {compactProgress ? "Planning" : "Planning readiness"}:{" "}
+            {activeChanges.status === "pending"
+              ? "Loading…"
+              : activeChanges.status === "error"
+                ? "Unavailable"
+                : planningKnown
+                  ? compactProgress
+                    ? planningComplete + "/" + planningTotal + " changes"
+                    : planningComplete +
+                      "/" +
+                      planningTotal +
+                      " of changes with planning artifacts"
+                  : "Unknown"}
+          </text>
         </SectionPanel>
         <box width="100%" height={1} flexShrink={0} />
         <SectionPanel
-          title="Active changes"
+          title="ACTIVE / WORK IN PROGRESS"
+          clipSafe
           state={activeSectionState}
           tone="accent"
         >
@@ -291,9 +174,7 @@ export function Overview({
             <text wrapMode="word">No active changes.</text>
           ) : (
             <box flexDirection="column" width="100%" gap={1}>
-              {model.activeChanges.map((change) => {
-                const taskProgress =
-                  change.tasks && change.tasks.total > 0 ? change.tasks : null;
+              {model.activeChanges.map((change, index) => {
                 return (
                   <box
                     key={change.name}
@@ -305,7 +186,7 @@ export function Overview({
                       wrapMode="char"
                       fg={tuiTextColor("accent", colorDisabled)}
                     >
-                      Change: {change.name}
+                      {registerNumber(index)} Change: {change.name}
                     </text>
                     <text
                       wrapMode="char"
@@ -313,61 +194,28 @@ export function Overview({
                     >
                       Status: {change.status} · Schema: {change.schema}
                     </text>
-                    <ProgressLine
-                      label={
-                        compactProgress ? "Planning" : "Planning readiness"
-                      }
-                      value={
-                        change.planning.total === 0
-                          ? "Unknown"
-                          : compactProgress
-                            ? change.planning.ready +
-                              "/" +
-                              change.planning.total +
-                              " artifacts ready"
-                            : planningLabel(change.planning)
-                      }
-                      ratio={
-                        change.planning.total === 0
-                          ? null
-                          : change.planning.ready / change.planning.total
-                      }
-                      transitionKey={
-                        "artifacts:" +
-                        change.planning.ready +
-                        "/" +
-                        change.planning.total
-                      }
-                      animate={animate && change.planning.total > 0}
+                    <TaskProgressView
+                      progress={change.tasks}
+                      compact={compactProgress}
                       cells={progressCells}
                       noColor={colorDisabled}
+                      reducedMotion={motionReduced}
+                      transitionKey={change.name}
                     />
-                    <ProgressLine
-                      label={compactProgress ? "Tasks" : "Task progress"}
-                      value={
-                        taskProgress
-                          ? compactProgress
-                            ? taskProgress.checked + "/" + taskProgress.total
-                            : taskLabel(taskProgress)
-                          : "Unknown"
-                      }
-                      ratio={
-                        taskProgress
-                          ? taskProgress.checked / taskProgress.total
-                          : null
-                      }
-                      transitionKey={
-                        taskProgress
-                          ? "tasks:" +
-                            taskProgress.checked +
+                    <text
+                      wrapMode="char"
+                      fg={tuiTextColor("muted", colorDisabled)}
+                    >
+                      {compactProgress ? "Planning" : "Planning readiness"}:{" "}
+                      {change.planning.total === 0
+                        ? "Unknown"
+                        : compactProgress
+                          ? change.planning.ready +
                             "/" +
-                            taskProgress.total
-                          : "tasks:unknown"
-                      }
-                      animate={animate && taskProgress !== null}
-                      cells={progressCells}
-                      noColor={colorDisabled}
-                    />
+                            change.planning.total +
+                            " artifacts ready"
+                          : planningLabel(change.planning)}
+                    </text>
                   </box>
                 );
               })}
@@ -377,7 +225,8 @@ export function Overview({
         <box width="100%" height={1} flexShrink={0} />
         {/* Keep history last in the sole focused scrollbox so End reaches archived records. */}
         <SectionPanel
-          title="Completed history"
+          title="HISTORY / ARCHIVED RECORDS"
+          clipSafe
           state={completedSectionState}
           tone="muted"
         >
@@ -394,13 +243,13 @@ export function Overview({
           ) : completedChanges.value.length === 0 ? (
             <text wrapMode="word">No archived records.</text>
           ) : (
-            completedChanges.value.map((record) => (
+            completedChanges.value.map((record, index) => (
               <text
                 key={record.name}
                 wrapMode="char"
                 fg={tuiTextColor("muted", colorDisabled)}
               >
-                Historical · {record.name}
+                {registerNumber(index)} Historical · {record.name}
               </text>
             ))
           )}
