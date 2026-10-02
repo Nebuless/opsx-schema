@@ -1,6 +1,11 @@
 import path from "node:path";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import {
+  useKeyboard,
+  useRenderer,
+  useTerminalDimensions,
+} from "@opentui/react";
+import { TextRenderable } from "@opentui/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import type { ChangeSummary, ProjectSnapshot } from "../domain/snapshot.ts";
 import { inspectBundledSchema, listBundledSchemas } from "../bundled/index.ts";
@@ -281,6 +286,19 @@ function wrappedRows(lines: readonly string[], width: number): number {
   );
 }
 
+// Percentage text widths can retain a pre-scrollbar column outside the clip.
+// Fit only this review's native leaves after layout, preserving native resize
+// callbacks and scroll-range ownership.
+function fitReviewText(scroll: ScrollBoxRenderable | null) {
+  if (!scroll || scroll.viewport.width < 1) return;
+  const right = scroll.viewport.x + scroll.viewport.width;
+  for (const child of scroll.getChildren()) {
+    if (!(child instanceof TextRenderable)) continue;
+    const available = Math.max(1, right - child.x);
+    if (child.width !== available) child.width = available;
+  }
+}
+
 export function Settings({
   root,
   snapshot,
@@ -296,6 +314,7 @@ export function Settings({
 }) {
   const { width: terminalWidth, height: terminalHeight } =
     useTerminalDimensions();
+  const renderer = useRenderer();
   const schemaNames = [
     ...new Set([
       ...listBundledSchemas(),
@@ -542,6 +561,16 @@ export function Settings({
   useEffect(() => {
     reviewViewport.current?.scrollTo({ x: 0, y: 0 });
   }, [screen]);
+
+  useEffect(() => {
+    if (!active || screen === "stage") return;
+    const settleReview = () => fitReviewText(reviewViewport.current);
+    settleReview();
+    renderer.on("frame", settleReview);
+    return () => {
+      renderer.off("frame", settleReview);
+    };
+  }, [active, renderer, screen]);
 
   useEffect(() => {
     let alive = true;
