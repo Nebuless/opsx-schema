@@ -2,12 +2,20 @@ import { useEffect, useState } from "react";
 import { useTimeline } from "@opentui/react";
 
 export const TUI_COLORS = {
-  accent: "#67d7e8",
-  pending: "#eab676",
-  success: "#84cca2",
-  error: "#f08080",
-  muted: "#8090a0",
-  border: "#435664",
+  accent: "#dce7dc",
+  pending: "#e4bd79",
+  success: "#a6d4bd",
+  error: "#f29f9a",
+  muted: "#a8bdb2",
+  border: "#59756b",
+} as const;
+
+export const TUI_SURFACES = {
+  ground: "#101d1c",
+  header: "#1b302b",
+  active: "#1d3630",
+  history: "#192723",
+  selected: "#355247",
 } as const;
 
 export type TuiTone = keyof typeof TUI_COLORS;
@@ -17,7 +25,9 @@ export function noColorEnabled(override?: boolean): boolean {
 }
 
 export function reducedMotionEnabled(override?: boolean): boolean {
-  if (override !== undefined) return override;
+  if (override !== undefined) {
+    return override;
+  }
   return ["1", "true", "yes"].includes(
     (process.env.REDUCED_MOTION ?? "").toLowerCase(),
   );
@@ -50,7 +60,9 @@ export function PendingRead({
   const timeline = useTimeline({ autoplay: false });
 
   useEffect(() => {
-    if (!animate) return;
+    if (!animate) {
+      return;
+    }
     let lastFrame = -1;
     const phase = { value: 0 };
     timeline.add(phase, {
