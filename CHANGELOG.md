@@ -5,6 +5,13 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+### Changed
+
+- Restyle terminal dashboard as a Change Register with distinct active and historical records, aligned planning and task measures, and stronger selected-row contrast.
+- Lead read views with exact task counts and remaining work, independent planning readiness, truthful incomplete tracks, and explicit pending, unavailable, zero-task and historical states.
+- Add passive bounded Markdown Document reading beside Source and Diff, with persistent reader context and retained file selection through return and terminal resize.
+- Reconcile refreshed file actions with the highlighted available inventory row and keep bounded Document/Source suffixes readable at End after native wrapping and resize.
+
 ## [0.2.0] - 2026-09-30
 
 ### Changed

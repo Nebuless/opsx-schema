@@ -79,6 +79,51 @@ test("Overview scroll reaches retained history after a long active list", async 
   }
 });
 
+test("register separates active work from numbered historical records without color", async () => {
+  const setup = await testRender(
+    <Overview
+      specifications={{
+        status: "loaded",
+        value: { specifications: 1, requirements: 2 },
+      }}
+      activeChanges={{
+        status: "loaded",
+        value: [
+          {
+            name: "current-work",
+            status: "in-progress",
+            schema: "schema-v1",
+            artifacts: [],
+            tasks: { total: 4, complete: 2, remaining: 2 },
+          },
+        ],
+      }}
+      completedChanges={{ status: "loaded", value: [{ name: "old-work" }] }}
+      reducedMotion
+      noColor
+    />,
+    { width: 60, height: 18 },
+  );
+  try {
+    await setup.renderOnce();
+    const activeFrame = setup.captureCharFrame();
+    expect(activeFrame).toContain("ACTIVE / WORK IN PROGRESS");
+    expect(activeFrame).toContain("01 Change: current-work");
+    expect(activeFrame).toContain("Planning: Unknown");
+    expect(activeFrame).toContain("Tasks: 2/4");
+    await act(async () => {
+      setup.mockInput.pressKey("END");
+      await Bun.sleep(30);
+      await setup.renderOnce();
+    });
+    const historyFrame = setup.captureCharFrame();
+    expect(historyFrame).toContain("HISTORY / ARCHIVED RECORDS");
+    expect(historyFrame).toContain("01 Historical · old-work");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("unknown totals have no fabricated progress bar", async () => {
   const active: ChangeSummary = {
     name: "unmeasured",
@@ -107,6 +152,205 @@ test("unknown totals have no fabricated progress bar", async () => {
     expect(frame).not.toMatch(/\[[=-]{6,16}\]/);
   } finally {
     act(() => setup.renderer.destroy());
+  }
+});
+
+for (const [checked, total] of [
+  [0, 10],
+  [1, 10],
+  [9, 10],
+  [10, 10],
+  [99, 100],
+  [0, 0],
+]) {
+  test(`Overview leads with exact tasks ${checked}/${total}, remaining and independent planning`, async () => {
+    const setup = await testRender(
+      <Overview
+        specifications={{
+          status: "loaded",
+          value: { specifications: 1, requirements: 2 },
+        }}
+        activeChanges={{
+          status: "loaded",
+          value: [
+            {
+              name: "truthful-progress",
+              status: "in-progress",
+              schema: "schema-v1",
+              artifacts: [{ id: "proposal", status: "done" }],
+              tasks: {
+                complete: checked!,
+                total: total!,
+                remaining: total! - checked!,
+              },
+            },
+          ],
+        }}
+        completedChanges={{ status: "loaded", value: [] }}
+        noColor
+        reducedMotion
+      />,
+      { width: 60, height: 32 },
+    );
+    try {
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain(`Tasks: ${checked}/${total}`);
+      expect(frame.indexOf("Tasks:")).toBeLessThan(frame.indexOf("Planning:"));
+      expect(frame).toContain("Planning: 1/1 changes");
+      expect(frame).toContain("1/1 artifacts ready");
+      if (total === 0) {
+        expect(frame).toContain("No checklist tasks");
+        expect(frame).not.toMatch(/\[[=-]+\]/);
+      } else {
+        expect(frame).toContain(`${total! - checked!} remaining`);
+        const cells = 6;
+        const filled =
+          checked === total
+            ? cells
+            : Math.min(cells - 1, Math.floor((checked! / total!) * cells));
+        const track = `[${"=".repeat(filled)}${"-".repeat(cells - filled)}]`;
+        expect(frame.match(/\[[=-]+\]/g)).toEqual([track, track]);
+      }
+      expect(frame).not.toContain("100%");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+for (const activeChanges of [
+  { status: "pending" } as const,
+  { status: "error", message: "inventory unavailable" } as const,
+]) {
+  test(`Overview ${activeChanges.status} task context is not successful zero or Unknown`, async () => {
+    const setup = await testRender(
+      <Overview
+        specifications={{
+          status: "loaded",
+          value: { specifications: 1, requirements: 2 },
+        }}
+        activeChanges={activeChanges}
+        completedChanges={{ status: "loaded", value: [] }}
+        noColor
+        reducedMotion
+      />,
+      { width: 100, height: 32 },
+    );
+    try {
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain(
+        activeChanges.status === "pending"
+          ? "Task progress: Loading"
+          : "Task progress unavailable",
+      );
+      expect(frame).not.toContain("Task progress: Unknown");
+      expect(frame).not.toContain("No checklist tasks");
+      expect(frame).not.toMatch(/\[[=-]+\]/);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+test("invalid task counts remain Unknown even with complete planning", async () => {
+  const setup = await testRender(
+    <Overview
+      specifications={{
+        status: "loaded",
+        value: { specifications: 1, requirements: 1 },
+      }}
+      activeChanges={{
+        status: "loaded",
+        value: [
+          {
+            name: "invalid-counts",
+            schema: "schema-v1",
+            status: "in-progress",
+            artifacts: [{ id: "proposal", status: "done" }],
+            tasks: { complete: 11, total: 10, remaining: -1 },
+          },
+        ],
+      }}
+      completedChanges={{ status: "loaded", value: [] }}
+      noColor
+      reducedMotion
+    />,
+    { width: 100, height: 32 },
+  );
+  try {
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame.match(/Task progress: Unknown/g)).toHaveLength(2);
+    expect(frame).toContain("1/1 artifacts ready");
+    expect(frame).not.toMatch(/\[[=-]+\]/);
+    expect(frame).not.toContain("11/10");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("Overview complete-to-99/100 updates both tracks truthfully in every frame", async () => {
+  let updateChecked!: (checked: number) => void;
+  function Harness() {
+    const [checked, setChecked] = useState(100);
+    updateChecked = setChecked;
+    return (
+      <Overview
+        specifications={{
+          status: "loaded",
+          value: { specifications: 1, requirements: 1 },
+        }}
+        activeChanges={{
+          status: "loaded",
+          value: [
+            {
+              name: "regression",
+              schema: "schema-v1",
+              status: "in-progress",
+              artifacts: [],
+              tasks: {
+                complete: checked,
+                total: 100,
+                remaining: 100 - checked,
+              },
+            },
+          ],
+        }}
+        completedChanges={{ status: "loaded", value: [] }}
+        noColor={false}
+        reducedMotion={false}
+      />
+    );
+  }
+  const setup = await testRender(<Harness />, { width: 100, height: 32 });
+  engine.attach(setup.renderer);
+  try {
+    await setup.renderOnce();
+    expect(setup.captureCharFrame().match(/\[={16}\]/g)).toHaveLength(2);
+    await act(async () => {
+      updateChecked(99);
+    });
+    await act(async () => {
+      await setup.renderOnce();
+    });
+    for (const elapsed of [0, 1, 65, 130, 260, 400]) {
+      await act(async () => {
+        engine.update(elapsed);
+      });
+      await act(async () => {
+        await setup.renderOnce();
+      });
+      const frame = setup.captureCharFrame();
+      expect(frame.match(/99\/100/g)).toHaveLength(2);
+      expect(frame.match(/1 remaining/g)).toHaveLength(2);
+      expect(frame.match(/\[={15}-\]/g)).toHaveLength(2);
+      expect(frame).not.toContain("100%");
+    }
+  } finally {
+    act(() => setup.renderer.destroy());
+    engine.detach();
   }
 });
 
@@ -253,7 +497,10 @@ test("NO_COLOR keeps pending indicators static and disables shared text color", 
     expect(tuiTextColor("accent")).toBeUndefined();
   } finally {
     act(() => setup.renderer.destroy());
-    if (previous === undefined) delete process.env.NO_COLOR;
-    else process.env.NO_COLOR = previous;
+    if (previous === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previous;
+    }
   }
 });

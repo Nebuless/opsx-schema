@@ -30,6 +30,7 @@ import {
   noColorEnabled,
   PendingRead,
   reducedMotionEnabled,
+  TUI_SURFACES,
   tuiTextColor,
 } from "./theme.tsx";
 import { ActionHint } from "./presentation.tsx";
@@ -97,10 +98,13 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
     ): Promise<void> {
       try {
         const value = await promise;
-        if (active) setState({ status: "loaded", value });
+        if (active) {
+          setState({ status: "loaded", value });
+        }
       } catch (failure) {
-        if (active)
+        if (active) {
           setState({ status: "error", message: readErrorMessage(failure) });
+        }
       }
     }
     function failTab(index: number, message: string) {
@@ -109,9 +113,13 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
         setSpecifications(failed);
         setActiveChanges(failed);
         setCompletedChanges(failed);
-      } else if (index === 1) setActiveChanges(failed);
-      else if (index === 2) setCompletedChanges(failed);
-      else setSettingsSnapshot(failed);
+      } else if (index === 1) {
+        setActiveChanges(failed);
+      } else if (index === 2) {
+        setCompletedChanges(failed);
+      } else {
+        setSettingsSnapshot(failed);
+      }
     }
     async function loadTab(index: number): Promise<void> {
       if (index === 0) {
@@ -155,7 +163,7 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
             schemas(client),
             changes(client),
           ]);
-        if (active)
+        if (active) {
           setSettingsSnapshot({
             status: "loaded",
             value: {
@@ -164,31 +172,39 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
               changes: loadedChanges,
             },
           });
+        }
       } catch (failure) {
-        if (active)
+        if (active) {
           setSettingsSnapshot({
             status: "error",
             message: readErrorMessage(failure),
           });
+        }
       }
     }
     async function refresh(index = tabRef.current): Promise<void> {
       requestedTab = index;
       pending = true;
-      if (!active || running) return;
+      if (!active || running) {
+        return;
+      }
       if (readinessError) {
         pending = false;
         failTab(index, readinessError);
         return;
       }
-      if (!watchReady) return;
+      if (!watchReady) {
+        return;
+      }
       running = true;
       do {
         pending = false;
         try {
           await loadTab(requestedTab);
         } catch (failure) {
-          if (active) failTab(requestedTab, readErrorMessage(failure));
+          if (active) {
+            failTab(requestedTab, readErrorMessage(failure));
+          }
         }
       } while (active && pending);
       running = false;
@@ -203,19 +219,25 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
         void refresh(tabRef.current);
       },
       (failure) => {
-        if (active) setError(readErrorMessage(failure));
+        if (active) {
+          setError(readErrorMessage(failure));
+        }
       },
     );
     void subscription.ready
       .then(() => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
         watchReady = true;
         setError("");
         setCoreStatus("ready");
         void refresh(tabRef.current);
       })
       .catch((failure) => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
         readinessError = readErrorMessage(failure);
         setCoreStatus("error");
         setError("Project watch failed: " + readinessError);
@@ -224,7 +246,9 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
     return () => {
       active = false;
       subscription.close();
-      if (clientRef.current === client) clientRef.current = null;
+      if (clientRef.current === client) {
+        clientRef.current = null;
+      }
       reload.current = () => {};
     };
   }, [root]);
@@ -251,7 +275,9 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
       return;
     }
     // Browser filters and focused editors own ordinary text, including digits and '?'.
-    if (filterEditing || renderer.currentFocusedEditor !== null) return;
+    if (filterEditing || renderer.currentFocusedEditor !== null) {
+      return;
+    }
     if (event.name === "q" && tab !== 3) {
       onQuit();
       return;
@@ -261,8 +287,9 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
       return;
     }
     const number = Number(event.name);
-    if (Number.isInteger(number) && number >= 1 && number <= TABS.length)
+    if (Number.isInteger(number) && number >= 1 && number <= TABS.length) {
       selectTab(number - 1);
+    }
   });
   const focusLabel = filterEditing
     ? `${TABS[tab]} filter input`
@@ -300,13 +327,19 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
         : "ERROR";
 
   return (
-    <box flexDirection="column" width="100%" height="100%">
+    <box
+      flexDirection="column"
+      width="100%"
+      height="100%"
+      backgroundColor={noColor ? undefined : TUI_SURFACES.ground}
+    >
       <box
         flexDirection="column"
         width="100%"
         flexShrink={0}
         borderStyle="single"
         borderColor={tuiTextColor("border", noColor)}
+        backgroundColor={noColor ? undefined : TUI_SURFACES.header}
         paddingLeft={1}
         paddingRight={1}
       >
@@ -335,7 +368,7 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
             <box
               key={name}
               backgroundColor={
-                !noColor && index === tab ? "#233540" : undefined
+                !noColor && index === tab ? TUI_SURFACES.selected : undefined
               }
               paddingLeft={1}
               paddingRight={1}
@@ -413,6 +446,7 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
             <Archive
               root={root}
               records={completedChanges.value}
+              refreshVersion={refreshVersion}
               onFilterEditingChange={setFilterEditing}
               viewportHeight={contentHeight}
             />
@@ -443,6 +477,7 @@ function Dashboard({ root, onQuit }: { root: string; onQuit: () => void }) {
         flexShrink={0}
         borderStyle="single"
         borderColor={tuiTextColor("border", noColor)}
+        backgroundColor={noColor ? undefined : TUI_SURFACES.header}
         paddingLeft={1}
         paddingRight={1}
       >
