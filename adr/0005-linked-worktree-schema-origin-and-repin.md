@@ -1,0 +1,34 @@
+# ADR 0005: Linked-worktree schema origin and explicit re-pin
+
+Status: Accepted
+Date: 2026-10-07
+
+## Context
+
+ADR 0002 treats resolved source and digest as provenance; ADR 0003 requires guarded recoverable writes and prevents transferring skill ownership silently. Revision references store an absolute source, so a different checkout path can be reported as a shadow before content and retention checks. CLI, switch and skill-pin consumers also compare absolute sources directly. Matching bytes or path suffixes do not establish origin.
+
+## Decision
+
+New Git-tracked project-local pins retain their absolute source and record a versioned origin witness: canonical Git common-directory path, filesystem directory identity (device and inode at pin time), and expected project-relative schema path. At each check, independently verify the live project root, Git directory pointer and back-reference, canonical schema containment, tracked `schema.yaml` at the expected relative path, and live common-directory identity. A removed original worktree is acceptable for a witnessed pin while its common directory remains the same directory. Distinct clones and moved, replaced or unverifiable common directories fail closed. Non-Git and non-project sources retain absolute-source semantics. Partial or unknown witness versions are invalid, not legacy.
+
+Legacy absolute-only receipts keep exact-path comparison. On a changed path, both the old source and original worktree root must remain reachable, with old and current worktrees independently verifiable as linked under the same live Git common directory and tracked schemas at corresponding paths. This proves accessible contemporaneous ownership, not an absent checkout. Reads never backfill witnesses or mutate receipts. An ambiguous legacy origin requires explicit re-pin. Name, digest, retained-snapshot, real-shadow, bundle-source and ownership checks remain independent. Recorded-to-live equivalence is distinct from equality of historical receipts and must be applied consistently across consumers.
+
+Add a separate guarded re-pin operation for one exact change and schema, with preview and apply token. The preview binds the prior effective reference, current schema/witness, intact retained snapshot, unshadowed tracked target, provenance, association and expected file state. Apply rechecks these under the shared project lock; a token does not authorize stale state. Strict workflow validation against retained/target-equivalent bytes remains mandatory. For this operation only, the explicitly reviewed historical-origin mismatch may be allowed; no other validation, ownership, content, retention, genuine-shadow or bundle check is relaxed. Re-pin does not rewrite creation, migration or retention history or invent proof of the old origin.
+
+Append a distinct ordered re-pin event to change-local provenance: operation ID, timestamp, exact prior and new references, and explicit skill-association disposition. Preserve earlier events and readable version-1 receipts. Subsequent migrations begin at the re-pinned effective reference. A dedicated persisted operation journal captures expected and intended provenance bytes and digests before a guarded atomic replacement. Recovery distinguishes absent, exactly present and conflicting intent; replay is idempotent. A conflict reports partial state for operator review and never guesses a rollback of unrelated edits. Success requires agreement between the effective reference and live pin.
+
+An associated change requires an explicitly reviewed target association in the same preview and guarded operation: target revision, skill bundle, profiles and hosts, manifest digests and ownership checks. Preserve the prior association in history and bind the reviewed target to the new effective reference atomically. Refuse missing, stale or incompatible association; never silently carry or drop ownership. Re-pin neither removes installed skills nor invents an association for an unassociated change.
+
+### Approved C2 amendment: association establishment and legacy compatibility
+
+The user approved this append-only amendment on 2026-10-07 after C2 round 26. Version 2 provenance records an ordered association-establishment array, including an empty array when no association was reviewed. Each entry records the exact selected association and its position after a migration count and re-pin count. The two counts distinguish multiple re-pins at the same migration position; order is chronological and is not inferred from timestamps. Creation with a reviewed selection and explicit selection reconciliation append establishment evidence. Migration and re-pin transitions must match the association folded at their exact positions. Version-2 history cannot seed an unknown predecessor; malformed, partial, mismatched, duplicate, out-of-order or out-of-bounds evidence is rejected. Reads do not rewrite or backfill history. This records a reviewed workflow action, not cryptographic authentication of locally edited JSON.
+
+Version 1 remains readable under its legacy interpretation, including paired migration receipts whose earlier association cannot be proven. Such a pair may be displayed but cannot authorize a further mutation. An eligible legacy association may be extended only after explicit review of the exact current selection and only when earlier events need no unprovable establishment; preserve earlier entries verbatim and append current-position establishment. Ambiguous paired history remains read-only. Unassociated version-1 history may be extended with an empty version-2 establishment array.
+
+## Consequences and alternatives
+
+The guarantee is narrower than arbitrary checkout portability. Filesystem identity is local; replacement or unsupported stat requires operator re-pin. Absolute-path equality creates false shadows, while suffix, digest, remote URL, commit ID and copied markers admit lookalikes. Automatic legacy backfill, same-name handoff and implicit skill-association transfer are rejected. This is not cryptographic protection against a malicious local actor. This decision refines, not supersedes, ADR 0002 and ADR 0003.
+
+## Approval and public-port provenance
+
+The user approved this ADR on 2026-10-07 at its pre-approval SHA-256 `110a3da218eaa32abb2741543f52938ead220dc9c4a94415fa947088a604eaaa`. The user separately approved the C2 association-establishment and legacy-compatibility amendment on 2026-10-07. The user authorized the isolated public-main delivery worktree and surgical port on 2026-10-09; this public ADR record was prepared on 2026-10-10. This ADR records those earlier decisions in the public durable ADR location; the port authorization does not represent a new review or approval of product implementation. The source implementation's proof obligations remain separate from this decision record.
