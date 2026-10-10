@@ -7,10 +7,14 @@ import { resources } from "../../../catalog/schemas.ts";
 import type { ResourceManifest } from "../../../catalog/schemas.ts";
 import { changeDirectory } from "../../../archive/index.ts";
 import {
+  checkRecordedRevision,
   changeHistory,
+  effectiveRevision,
+  hasPairedAssociationHistory,
   readProvenance,
   recordSelectionAssociation,
   revisionRef,
+  sameSelectionIdentity,
 } from "../../../provenance/index.ts";
 import { resolveRevision, retainRevision } from "../../../revisions/index.ts";
 import {
@@ -46,7 +50,7 @@ import {
   requireCount,
   skillBundle,
 } from "../shared.ts";
-import { samePinnedRevision, verifiedPinOptions } from "../skill-pins.ts";
+import { verifiedPinOptions } from "../skill-pins.ts";
 
 async function skillDetails(
   root: string,
@@ -154,16 +158,34 @@ async function reconcileSkillPin(
       "The active schema revision differs from the reviewed --revision-digest.",
     );
   const prior = await readProvenance(directory);
-  const recorded =
-    prior?.migrations.at(-1)?.to ?? prior?.retained ?? prior?.created;
+  const recorded = prior ? effectiveRevision(prior) : null;
   if (
-    prior?.association ||
-    (recorded && !samePinnedRevision(recorded, revision))
+    (prior?.version === 2 && prior.association) ||
+    (prior?.version === 1 && hasPairedAssociationHistory(prior))
   )
     throw new OpsxError(
       "RESOURCE_PIN_REVISION_CHANGED",
       "The pin already has an association or its recorded revision differs; inspect provenance before reconciling.",
     );
+  if (recorded) {
+    const health = await checkRecordedRevision(
+      root,
+      recorded,
+      revision,
+      client,
+    );
+    if (
+      !health.check.revision ||
+      !health.liveMatches ||
+      health.check.revision.digest !== recorded.digest ||
+      (health.check.state !== "intact" &&
+        !(health.check.state === "drift" && health.retentionMissing))
+    )
+      throw new OpsxError(
+        "RESOURCE_PIN_REVISION_CHANGED",
+        "The recorded revision is not healthy against the live schema; inspect provenance before reconciling.",
+      );
+  }
   const catalog = await loadSkillBundles(revision.source);
   assertSkillBundleDeclared(catalog, revision.name, bundle);
   const declarations = catalog.declarations[bundle] ?? [];
@@ -202,18 +224,31 @@ async function reconcileSkillPin(
       );
     manifestDigests = install.manifestDigests;
   }
+  const associationRevision = recorded ?? revisionRef(revision);
   const association = {
     version: 1 as const,
-    effectiveRevision: revisionRef(revision),
+    effectiveRevision: associationRevision,
     profiles: [...profiles].sort(),
     skillHosts: [...skillHosts].sort(),
     skillBundle: bundle,
     manifestDigests,
   };
+  if (
+    prior?.version === 1 &&
+    !hasPairedAssociationHistory(prior) &&
+    prior.association &&
+    !sameSelectionIdentity(prior.association, association)
+  ) {
+    throw new OpsxError(
+      "PROVENANCE_ASSOCIATION_MISMATCH",
+      `Change ${change} already has a different selection association.`,
+    );
+  }
   const binding = {
     root,
     change,
-    revision: association.effectiveRevision,
+    revision: associationRevision,
+    liveRevision: revisionRef(revision),
     association,
     prior,
     pin: history.currentSchema,
@@ -244,7 +279,7 @@ async function reconcileSkillPin(
   await recordSelectionAssociation(
     root,
     change,
-    revisionRef(revision),
+    associationRevision,
     association,
   );
   return { phase: "applied", target, association };

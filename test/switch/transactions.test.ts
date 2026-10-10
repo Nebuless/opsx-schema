@@ -29,6 +29,7 @@ import {
 } from "../../src/provenance/index.ts";
 import type { ChangeSelectionAssociation } from "../../src/provenance/index.ts";
 import { resolveRevision, retainRevision } from "../../src/revisions/index.ts";
+import type { RevisionRef } from "../../src/revisions/index.ts";
 import { apply, inspectRecovery, preview } from "../../src/switch/index.ts";
 import { assertNoIncompleteSwitchRecovery } from "../../src/switch/recovery.ts";
 import type { SkillInstallHostId } from "../../src/resources/index.ts";
@@ -61,9 +62,16 @@ async function fixture(
     changes?: string[];
     compatible?: string[];
     profiles?: boolean;
+    worktree?: boolean;
+    gitTracked?: boolean;
+    installMinimalist?: boolean;
   } = {},
 ): Promise<{ root: string; sources: string }> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "opsx-switch-test-"));
+  const root = await mkdtemp(
+    options.worktree
+      ? path.join(import.meta.dir, ".opsx-task2.1-")
+      : path.join(os.tmpdir(), "opsx-switch-test-"),
+  );
   fixtures.push(root);
   await mkdir(path.join(root, "openspec", "changes"), { recursive: true });
   await writeFile(
@@ -77,6 +85,49 @@ async function fixture(
     path.join(root, "openspec", "schemas", "legacy-schema"),
     { recursive: true },
   );
+  if (options.installMinimalist) {
+    const packageRoot = path.resolve(import.meta.dir, "../..");
+    await cp(
+      path.join(packageRoot, "resources/openspec/schemas/minimalist"),
+      path.join(root, "openspec/schemas/minimalist"),
+      { recursive: true },
+    );
+  }
+  if (options.gitTracked) {
+    const initialized = spawnSync("git", ["init", "--quiet", "-b", "main"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    if (initialized.status !== 0)
+      throw new Error(
+        initialized.stderr || "Could not initialize fixture Git repository.",
+      );
+    const trackedPaths = ["openspec/schemas/legacy-schema"];
+    if (options.installMinimalist)
+      trackedPaths.push("openspec/schemas/minimalist");
+    const tracked = spawnSync("git", ["add", ...trackedPaths], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    if (tracked.status !== 0)
+      throw new Error(tracked.stderr || "Could not track fixture schema.");
+    const committed = spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    if (committed.status !== 0)
+      throw new Error(committed.stderr || "Could not commit fixture schema.");
+  }
   const sources = path.join(root, "sources");
   const skill = path.join(
     sources,
@@ -966,10 +1017,17 @@ test("reconciles missing selection associations without inventing creation histo
   );
   const reconciled = await readProvenance(legacy);
   expect(reconciled).toMatchObject({
-    version: 1,
+    version: 2,
     created: null,
     retained: association.effectiveRevision,
     migrations: [],
+    establishments: [
+      {
+        afterMigrationCount: 0,
+        afterRePinCount: 0,
+        association,
+      },
+    ],
     association,
   });
   const reconciledBytes = await readFile(
@@ -1137,6 +1195,9 @@ test("schema migration rebinds an associated change to the reviewed target selec
     original.effectiveRevision,
     original,
   );
+  const recordedBeforeSwitch = await readProvenance(
+    path.join(root, "openspec", "changes", "migrate"),
+  );
   const selected = {
     ...request,
     skillHosts: ["atomic"] as SkillInstallHostId[],
@@ -1152,7 +1213,15 @@ test("schema migration rebinds an associated change to the reviewed target selec
   const provenance = await readProvenance(
     path.join(root, "openspec", "changes", "migrate"),
   );
+  expect(provenance?.version).toBe(2);
+  expect(provenance?.establishments).toEqual(
+    recordedBeforeSwitch?.establishments,
+  );
   expect(provenance?.association).toEqual(reviewed.selectionReceipt.receipt!);
+  expect(provenance?.migrations.at(-1)?.associationBefore).toEqual(original);
+  expect(provenance?.migrations.at(-1)?.associationAfter).toEqual(
+    reviewed.selectionReceipt.receipt!,
+  );
   expect(provenance?.migrations.at(-1)?.to).toEqual(
     reviewed.selectionReceipt.receipt?.effectiveRevision,
   );
@@ -1307,4 +1376,220 @@ test("standalone handoff refuses an associated change before staging or metadata
   expect(await readFile(pinPath)).toEqual(pinBefore);
   expect(await readFile(provenancePath)).toEqual(provenanceBefore);
   expect((await inspectRecovery(root)).status).toBe("none");
+}, 30_000);
+
+test("standalone handoff refuses paired legacy history when top-level association is absent", async () => {
+  const { root } = await fixture({
+    changes: ["migrate"],
+    compatible: ["migrate"],
+  });
+  const original = await selectionFor(root, "legacy-schema", ["atomic"]);
+  const provenancePath = path.join(
+    root,
+    "openspec",
+    "changes",
+    "migrate",
+    ".opsx-provenance.json",
+  );
+  await writeFile(
+    provenancePath,
+    JSON.stringify({
+      version: 1,
+      created: original.effectiveRevision,
+      migrations: [
+        {
+          from: original.effectiveRevision,
+          to: original.effectiveRevision,
+          at: "2026-10-07T00:00:00.000Z",
+          associationBefore: original,
+          associationAfter: original,
+        },
+      ],
+    }),
+  );
+  const targetSchema = path.join(root, "openspec", "schemas", "handoff-target");
+  await cp(
+    path.join(root, "openspec", "schemas", "legacy-schema"),
+    targetSchema,
+    { recursive: true },
+  );
+  const pinPath = path.join(
+    root,
+    "openspec",
+    "changes",
+    "migrate",
+    ".openspec.yaml",
+  );
+  const pinBefore = await readFile(pinPath);
+  const provenanceBefore = await readFile(provenancePath);
+
+  const result = await previewSchemaHandoff(root, "migrate", "handoff-target");
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: "PROVENANCE_ASSOCIATION_REVIEW_REQUIRED" },
+  });
+  expect(await readFile(pinPath)).toEqual(pinBefore);
+  expect(await readFile(provenancePath)).toEqual(provenanceBefore);
+}, 30_000);
+
+test("same-path legacy tracked pins migrate through an exact guarded switch", async () => {
+  const { root, sources } = await fixture({
+    changes: ["migrate"],
+    compatible: ["migrate"],
+    gitTracked: true,
+    installMinimalist: true,
+    worktree: true,
+  });
+  const client = new OpenSpecClient(root);
+  const live = await resolveRevision(client, "legacy-schema");
+  const recorded = {
+    name: live.name,
+    source: live.source,
+    digest: live.digest,
+  };
+  const liveSelection = await selectionFor(root, "legacy-schema", ["atomic"]);
+  const historicalSelection = {
+    ...liveSelection,
+    effectiveRevision: recorded,
+  };
+  const changeDirectory = path.join(root, "openspec", "changes", "migrate");
+  const provenancePath = path.join(changeDirectory, ".opsx-provenance.json");
+  await rm(provenancePath, { force: true });
+  await recordCreation(root, "migrate", recorded, historicalSelection);
+  const retained = path.join(
+    root,
+    "openspec",
+    ".opsx",
+    "revisions",
+    live.name,
+    live.digest,
+  );
+  await rm(retained, { recursive: true, force: true });
+  const handoff = await previewSchemaHandoff(root, "migrate", "minimalist");
+  expect(handoff).toMatchObject({
+    ok: false,
+    error: { code: "PROVENANCE_ASSOCIATION_REVIEW_REQUIRED" },
+  });
+  await retainRevision(root, live);
+
+  const selected = {
+    ...request,
+    skillHosts: ["atomic"] as SkillInstallHostId[],
+    migrations: ["migrate"],
+  };
+  const options = { sourceRoots: sourceRoots(sources) };
+  const reviewed = await preview(root, selected, options);
+  expect(reviewed.canApply, JSON.stringify(reviewed.diagnostics)).toBe(true);
+  expect(reviewed.migrations).toHaveLength(1);
+  expect(reviewed.migrations[0]?.retainCurrentRevision).toBe(false);
+
+  const applied = await apply(root, selected, reviewed.token, options);
+  expect(applied.status).toBe("applied");
+  const provenance = await readProvenance(changeDirectory);
+  expect(provenance?.created).toEqual(recorded);
+  expect(provenance?.migrations.at(-1)?.from).toEqual(recorded);
+  expect(provenance?.migrations.at(-1)?.associationBefore).toEqual(
+    historicalSelection,
+  );
+  expect(
+    await readFile(
+      path.join(
+        root,
+        "openspec",
+        ".opsx",
+        "revisions",
+        live.name,
+        live.digest,
+        "schema.yaml",
+      ),
+      "utf8",
+    ),
+  ).toContain("spec-driven");
+}, 30_000);
+
+test("guarded switch preserves prior migration and re-pin timestamps at epoch", async () => {
+  const { root, sources } = await fixture({
+    changes: ["migrate"],
+    compatible: ["migrate"],
+    gitTracked: true,
+    installMinimalist: true,
+    worktree: true,
+  });
+  const client = new OpenSpecClient(root);
+  const live = await resolveRevision(client, "legacy-schema");
+  const legacy = {
+    name: live.name,
+    source: live.source,
+    digest: live.digest,
+  };
+  const older: RevisionRef = {
+    name: "older-schema",
+    source: path.join(root, "openspec", "schemas", "older-schema"),
+    digest: "a".repeat(64),
+  };
+  const currentSelection = await selectionFor(root, "legacy-schema", [
+    "atomic",
+  ]);
+  const selectionAt = (effectiveRevision: RevisionRef) => ({
+    ...currentSelection,
+    effectiveRevision,
+  });
+  const olderSelection = selectionAt(older);
+  const legacySelection = selectionAt(legacy);
+  const liveSelection = selectionAt(revisionRef(live));
+  const epoch = new Date(0).toISOString();
+  const directory = path.join(root, "openspec", "changes", "migrate");
+  const provenancePath = path.join(directory, ".opsx-provenance.json");
+  const initial = {
+    version: 2,
+    created: older,
+    migrations: [
+      {
+        from: older,
+        to: legacy,
+        at: epoch,
+        associationBefore: olderSelection,
+        associationAfter: legacySelection,
+      },
+    ],
+    rePins: [
+      {
+        operationId: "epoch-repin",
+        at: epoch,
+        afterMigrationCount: 1,
+        from: legacy,
+        to: revisionRef(live),
+        associationBefore: legacySelection,
+        associationAfter: liveSelection,
+      },
+    ],
+    establishments: [
+      {
+        afterMigrationCount: 0,
+        afterRePinCount: 0,
+        association: olderSelection,
+      },
+    ],
+    association: liveSelection,
+  };
+  await writeFile(provenancePath, JSON.stringify(initial, null, 2) + "\n");
+  expect(await readProvenance(directory)).not.toBeNull();
+
+  const selected = {
+    ...request,
+    skillHosts: ["atomic"] as SkillInstallHostId[],
+    migrations: ["migrate"],
+  };
+  const options = { sourceRoots: sourceRoots(sources) };
+  const reviewed = await preview(root, selected, options);
+  expect(reviewed.canApply, JSON.stringify(reviewed.diagnostics)).toBe(true);
+  const applied = await apply(root, selected, reviewed.token, options);
+  expect(applied.status).toBe("applied");
+
+  const provenance = await readProvenance(directory);
+  expect(provenance?.migrations[0]).toEqual(initial.migrations[0]);
+  expect(provenance?.rePins?.[0]).toEqual(initial.rePins[0]);
+  expect(provenance?.establishments).toEqual(initial.establishments);
+  expect(provenance?.migrations.at(-1)?.at).not.toBe(epoch);
+  expect(provenance?.association).toEqual(reviewed.selectionReceipt.receipt!);
 }, 30_000);

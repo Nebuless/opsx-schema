@@ -17,6 +17,8 @@ import { OpsxError } from "../domain/project.ts";
 import { changeDirectory } from "../archive/index.ts";
 import { withProjectMutationLock } from "../project-lock.ts";
 import {
+  effectiveAssociation,
+  hasPairedAssociationHistory,
   readProvenance,
   recordMigration,
   retainLegacy,
@@ -159,7 +161,12 @@ async function stageSchemaValidation(
   to: Revision,
 ): Promise<ValidationResult> {
   const sourceDirectory = await changeDirectory(root, change);
-  if ((await readProvenance(sourceDirectory))?.association) {
+  const provenance = await readProvenance(sourceDirectory);
+  if (
+    provenance &&
+    (effectiveAssociation(provenance) ||
+      (provenance.version === 1 && hasPairedAssociationHistory(provenance)))
+  ) {
     throw new OpsxError(
       "PROVENANCE_ASSOCIATION_REVIEW_REQUIRED",
       "Standalone schema handoff cannot migrate an associated change without a reviewed target selection; use a guarded schema switch.",
@@ -263,6 +270,7 @@ async function buildHandoffPlan(
         root,
         change,
         from,
+        liveFrom: revisionRef(fromRevision),
         to: toRevision,
         createdUnder,
         retainCurrentRevision,
@@ -304,6 +312,7 @@ async function buildHandoffPlan(
       root,
       change,
       from,
+      liveFrom: revisionRef(fromRevision),
       to: toRevision,
       createdUnder,
       retainCurrentRevision,
