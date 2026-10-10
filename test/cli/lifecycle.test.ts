@@ -1,5 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +27,11 @@ import {
 import { changeDirectory, listArchived } from "../../src/archive/index.ts";
 import { readProvenance } from "../../src/provenance/index.ts";
 import { checkRevision } from "../../src/revisions/index.ts";
+import { resolveRevision } from "../../src/revisions/index.ts";
+import {
+  loadAgentProfileDigest,
+  loadSkillBundles,
+} from "../../src/resources/index.ts";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
 import {
   acquireProjectMutationLock,
@@ -46,6 +61,82 @@ async function fixture(): Promise<string> {
     "schema: spec-driven\n",
   );
   return root;
+}
+
+async function worktreeFixture(): Promise<string> {
+  const root = await mkdtemp(path.join(import.meta.dir, ".opsx-task2.1-"));
+  fixtures.push(root);
+  await mkdir(path.join(root, "openspec", "changes"), { recursive: true });
+  await writeFile(
+    path.join(root, "openspec", "config.yaml"),
+    "schema: spec-driven\n",
+  );
+  return root;
+}
+
+async function localSchemaFixture(tracked: boolean): Promise<{
+  root: string;
+  source: string;
+  recorded: { name: string; source: string; digest: string };
+}> {
+  const root = await worktreeFixture();
+  const client = new OpenSpecClient(root);
+  const defaultRevision = await resolveRevision(client, "spec-driven");
+  const source = path.join(root, "openspec", "schemas", "legacy-schema");
+  await cp(defaultRevision.source, source, { recursive: true });
+  if (tracked) {
+    execFileSync("git", ["init", "--quiet", "-b", "main"], { cwd: root });
+    execFileSync("git", ["add", "openspec/schemas/legacy-schema"], {
+      cwd: root,
+    });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+      ],
+      { cwd: root },
+    );
+  }
+  const live = await resolveRevision(client, "legacy-schema");
+  return {
+    root,
+    source,
+    recorded: {
+      name: live.name,
+      source: live.source,
+      digest: live.digest,
+    },
+  };
+}
+
+async function projectTree(root: string): Promise<string[]> {
+  const entries: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name === ".git") continue;
+      const target = path.join(directory, entry.name);
+      const relative = path.relative(root, target);
+      if (entry.isDirectory()) {
+        entries.push(`directory:${relative}`);
+        await visit(target);
+      } else if (entry.isFile()) {
+        entries.push(
+          `file:${relative}:${(await readFile(target)).toString("base64")}`,
+        );
+      } else if (entry.isSymbolicLink()) {
+        entries.push(`link:${relative}:${await readlink(target)}`);
+      }
+    }
+  };
+  await visit(root);
+  return entries.sort();
 }
 
 test("project mutation lock is exclusive and releases after callback failure", async () => {
@@ -140,7 +231,8 @@ test(
       throw new Error("Expected creation receipt");
     const directory = await changeDirectory(root, "cli-smoke");
     const provenance = await readProvenance(directory);
-    expect(provenance?.version).toBe(1);
+    expect(provenance?.version).toBe(2);
+    expect(provenance?.establishments).toHaveLength(1);
     expect(provenance?.created?.name).toBe("spec-driven");
     expect(provenance?.association).toEqual(applied.data.association);
     expect(provenance?.association?.effectiveRevision).toEqual(
@@ -381,3 +473,168 @@ test(
   },
   { timeout: 30_000 },
 );
+
+test("legacy association mismatch is refused before reconcile writes retained state", async () => {
+  const { root, source, recorded } = await localSchemaFixture(false);
+  const directory = path.join(root, "openspec", "changes", "legacy-pin");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, ".openspec.yaml"),
+    "schema: legacy-schema\n",
+  );
+  const catalog = await loadSkillBundles(source);
+  const association = {
+    version: 1 as const,
+    effectiveRevision: recorded,
+    profiles: ["codex"],
+    skillHosts: [],
+    skillBundle: "default" as const,
+    manifestDigests: {
+      agentProfiles: await loadAgentProfileDigest(),
+      schemaSkills: catalog.manifestDigests.skills,
+      skillBundles: catalog.manifestDigests.profiles,
+    },
+  };
+  await writeFile(
+    path.join(directory, ".opsx-provenance.json"),
+    JSON.stringify({
+      version: 1,
+      created: recorded,
+      migrations: [],
+      association,
+    }),
+  );
+  const cli = path.resolve(import.meta.dir, "../../src/domain/cli.ts");
+  const args = [
+    cli,
+    "--project",
+    root,
+    "skills",
+    "reconcile",
+    "legacy-pin",
+    "--revision-digest",
+    recorded.digest,
+    "--bundle",
+    "default",
+    "--json",
+  ];
+  const before = await projectTree(root);
+  const preview = spawnSync(process.execPath, args, {
+    cwd: root,
+    encoding: "utf8",
+  });
+  expect(preview.error).toBeUndefined();
+  const parsedPreview = JSON.parse(preview.stdout);
+  const applyToken = parsedPreview.data?.confirmation?.token ?? "stale-token";
+  const supplied = spawnSync(
+    process.execPath,
+    [...args.slice(0, -1), "--apply-token", applyToken, "--json"],
+    { cwd: root, encoding: "utf8" },
+  );
+  expect(supplied.error).toBeUndefined();
+  const after = await projectTree(root);
+  const actual = {
+    previewStatus: preview.status,
+    previewCode: JSON.parse(preview.stdout).error?.code ?? null,
+    suppliedStatus: supplied.status,
+    suppliedCode: JSON.parse(supplied.stdout).error?.code ?? null,
+    treeUnchanged: JSON.stringify(after) === JSON.stringify(before),
+  };
+  expect(actual).toEqual({
+    previewStatus: 1,
+    previewCode: "PROVENANCE_ASSOCIATION_MISMATCH",
+    suppliedStatus: 1,
+    suppliedCode: "PROVENANCE_ASSOCIATION_MISMATCH",
+    treeUnchanged: true,
+  });
+}, 30_000);
+
+test("same-selection reconcile upgrades legacy history while retaining its historical ref", async () => {
+  const { root, source, recorded } = await localSchemaFixture(true);
+  const directory = path.join(root, "openspec", "changes", "legacy-pin");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, ".openspec.yaml"),
+    "schema: legacy-schema\n",
+  );
+  const catalog = await loadSkillBundles(source);
+  const association = {
+    version: 1 as const,
+    effectiveRevision: recorded,
+    profiles: [],
+    skillHosts: [],
+    skillBundle: "default" as const,
+    manifestDigests: {
+      agentProfiles: await loadAgentProfileDigest(),
+      schemaSkills: catalog.manifestDigests.skills,
+      skillBundles: catalog.manifestDigests.profiles,
+    },
+  };
+  await writeFile(
+    path.join(directory, ".opsx-provenance.json"),
+    JSON.stringify({
+      version: 1,
+      created: recorded,
+      migrations: [],
+      association,
+    }),
+  );
+  const snapshot = path.join(
+    root,
+    "openspec",
+    ".opsx",
+    "revisions",
+    recorded.name,
+    recorded.digest,
+    "schema.yaml",
+  );
+  await expect(readFile(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
+
+  const cli = path.resolve(import.meta.dir, "../../src/domain/cli.ts");
+  const args = [
+    cli,
+    "--project",
+    root,
+    "skills",
+    "reconcile",
+    "legacy-pin",
+    "--revision-digest",
+    recorded.digest,
+    "--bundle",
+    "default",
+    "--json",
+  ];
+  const preview = spawnSync(process.execPath, args, {
+    cwd: root,
+    encoding: "utf8",
+  });
+  expect(preview.error).toBeUndefined();
+  expect(preview.status, preview.stderr + preview.stdout).toBe(0);
+  const previewEnvelope = JSON.parse(preview.stdout);
+  expect(previewEnvelope.ok, preview.stdout).toBe(true);
+  expect(previewEnvelope.data.association).toEqual(association);
+  const token = previewEnvelope.data.confirmation.token as string;
+  const applied = spawnSync(
+    process.execPath,
+    [...args.slice(0, -1), "--apply-token", token, "--json"],
+    { cwd: root, encoding: "utf8" },
+  );
+  expect(applied.error).toBeUndefined();
+  expect(applied.status, applied.stderr + applied.stdout).toBe(0);
+  expect(JSON.parse(applied.stdout).data.phase).toBe("applied");
+
+  const provenance = await readProvenance(directory);
+  expect(provenance?.version).toBe(2);
+  expect(provenance?.created).toEqual(recorded);
+  expect(provenance?.association).toEqual(association);
+  expect(provenance?.establishments).toEqual([
+    {
+      afterMigrationCount: 0,
+      afterRePinCount: 0,
+      association,
+    },
+  ]);
+  await expect(readFile(snapshot, "utf8")).resolves.toContain(
+    "name: spec-driven",
+  );
+}, 30_000);

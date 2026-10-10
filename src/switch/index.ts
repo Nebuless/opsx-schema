@@ -31,16 +31,21 @@ import { changes } from "../domain/snapshot.ts";
 import type { ChangeSummary } from "../domain/snapshot.ts";
 import { changeDirectory } from "../archive/index.ts";
 import {
-  checkRevision,
   resolveRevision,
   retainRevision,
   inspectRetainedRevision,
 } from "../revisions/index.ts";
 import type { Revision, RevisionRef } from "../revisions/index.ts";
 import {
+  checkRecordedRevision,
   changeHistory,
+  effectiveAssociation,
+  effectiveRevision,
+  hasPairedAssociationHistory,
+  parseProvenance,
   readProvenance,
   revisionRef,
+  sameRevisionRef as sameProvenanceRevisionRef,
 } from "../provenance/index.ts";
 import type {
   ChangeHistory,
@@ -284,15 +289,7 @@ const sha256 = (value: string | Uint8Array): string =>
 const canonicalJson = (value: unknown): string => JSON.stringify(value);
 
 function sameRevisionRef(a: RevisionRef, b: RevisionRef): boolean {
-  if (a.name !== b.name || a.source !== b.source || a.digest !== b.digest)
-    return false;
-  const aBundle = (a as RevisionRef & { bundleSource?: unknown }).bundleSource;
-  const bBundle = (b as RevisionRef & { bundleSource?: unknown }).bundleSource;
-  return (
-    aBundle === undefined ||
-    bBundle === undefined ||
-    canonicalJson(aBundle) === canonicalJson(bBundle)
-  );
+  return sameProvenanceRevisionRef(a, b);
 }
 
 function sameExactRevisionRef(a: RevisionRef, b: RevisionRef): boolean {
@@ -751,19 +748,10 @@ function parseProvenanceSnapshot(
 ): Provenance | null {
   if (!snapshot.exists) return null;
   try {
-    const value = JSON.parse(
+    return parseProvenance(
       Buffer.from(snapshot.bytes!, "base64").toString("utf8"),
-    ) as Provenance;
-    if (
-      !value ||
-      value.version !== 1 ||
-      (value.created !== null &&
-        (!value.created || typeof value.created.name !== "string")) ||
-      !Array.isArray(value.migrations)
-    ) {
-      throw new Error("invalid shape");
-    }
-    return value;
+      label,
+    );
   } catch {
     throw new OpsxError(
       "PROVENANCE_INVALID",
@@ -780,10 +768,22 @@ function provenanceBytes(
 ): string {
   const created = previous?.created ?? null;
   const migrations = [...(previous?.migrations ?? [])];
+  const previousAssociation = previous ? effectiveAssociation(previous) : null;
+  if (
+    previous?.version === 1 &&
+    (previousAssociation || hasPairedAssociationHistory(previous))
+  ) {
+    throw new OpsxError(
+      "PROVENANCE_ASSOCIATION_REVIEW_REQUIRED",
+      "Legacy associated provenance requires explicit selection review before schema switching.",
+    );
+  }
   if (
     retained &&
     previous?.retained &&
-    !sameRevisionRef(previous.retained, retained)
+    !sameRevisionRef(previous.retained, retained) &&
+    previous.migrations.length === 0 &&
+    (previous.rePins?.length ?? 0) === 0
   ) {
     throw new OpsxError(
       "PROVENANCE_STALE",
@@ -791,7 +791,7 @@ function provenanceBytes(
     );
   }
   if (migration) {
-    const prior = migrations.at(-1)?.to ?? previous?.retained ?? created;
+    const prior = previous ? effectiveRevision(previous) : null;
     if (prior && !sameRevisionRef(prior, migration.from))
       throw new OpsxError(
         "PROVENANCE_STALE",
@@ -799,8 +799,8 @@ function provenanceBytes(
       );
     migrations.push(migration);
   }
-  let association = previous?.association;
-  if (migration && previous?.association) {
+  let association = previousAssociation;
+  if (migration && previousAssociation) {
     if (
       !replacementAssociation ||
       !isProjectSelectionReceipt(replacementAssociation) ||
@@ -821,16 +821,76 @@ function provenanceBytes(
       "A migration cannot invent a selection association for an unassociated change.",
     );
   }
+  const version: Provenance["version"] =
+    migration || previous?.version === 2 || !previous ? 2 : 1;
   const next: Provenance = {
-    version: 1,
+    ...previous,
+    version,
     created,
     migrations,
-    ...((retained ?? previous?.retained)
-      ? { retained: retained ?? previous!.retained }
+    ...(version === 2
+      ? { establishments: previous?.establishments ?? [] }
+      : {}),
+    ...(previous?.rePins ? { rePins: previous.rePins } : {}),
+    ...((previous?.retained ??
+    (!created &&
+    (previous?.migrations.length ?? 0) === 0 &&
+    (previous?.rePins?.length ?? 0) === 0
+      ? retained
+      : null))
+      ? { retained: previous?.retained ?? retained! }
       : {}),
     ...(association ? { association } : {}),
   };
-  return `${JSON.stringify(next, null, 2)}\n`;
+  if (previous?.version === 1 && version === 2) {
+    next.association = undefined;
+    if (migration && previousAssociation) {
+      throw new OpsxError(
+        "PROVENANCE_ASSOCIATION_REVIEW_REQUIRED",
+        "Legacy association cannot be upgraded through schema switching.",
+      );
+    }
+  }
+  if (migration && previousAssociation && association) {
+    migrations[migrations.length - 1] = {
+      ...migration,
+      associationBefore: previousAssociation,
+      associationAfter: association,
+    };
+  }
+  const serialized = `${JSON.stringify(next, null, 2)}\n`;
+  parseProvenance(serialized, "switch provenance preview");
+  return serialized;
+}
+
+function timestampAppendedMigration(write: FileWrite): string {
+  const intended = parseProvenance(write.after, write.target);
+  const prior = write.before.exists
+    ? parseProvenance(
+        Buffer.from(write.before.bytes!, "base64").toString("utf8"),
+        write.target,
+      )
+    : null;
+  const migrationIndex = prior?.migrations.length ?? 0;
+  if (intended.migrations.length !== migrationIndex + 1)
+    throw new OpsxError(
+      "PROVENANCE_INVALID",
+      "Switch provenance must append exactly one migration before Apply.",
+    );
+  const appended = intended.migrations[migrationIndex];
+  if (!appended)
+    throw new OpsxError(
+      "PROVENANCE_INVALID",
+      "Switch provenance is missing its appended migration.",
+    );
+  const migrations = [...intended.migrations];
+  migrations[migrationIndex] = {
+    ...appended,
+    at: new Date().toISOString(),
+  };
+  const serialized = `${JSON.stringify({ ...intended, migrations }, null, 2)}\n`;
+  parseProvenance(serialized, write.target);
+  return serialized;
 }
 
 async function makeWrite(
@@ -856,11 +916,12 @@ async function previewSwitchHandoff(
   schemaName: string,
   destinationIsUninstalledBundle: boolean,
 ): Promise<HandoffResult> {
+  const entryProvenance = parseProvenanceSnapshot(
+    entry.provenance,
+    path.join(entry.directory, ".opsx-provenance.json"),
+  );
   const hasSelectionAssociation = Boolean(
-    parseProvenanceSnapshot(
-      entry.provenance,
-      path.join(entry.directory, ".opsx-provenance.json"),
-    )?.association,
+    entryProvenance && effectiveAssociation(entryProvenance),
   );
   if (
     !targetSchemaRoot ||
@@ -875,25 +936,28 @@ async function previewSwitchHandoff(
       "Current schema has same-name shadows.",
     );
   let from: RevisionRef = revisionRef(source);
-  const recorded =
-    entry.history.migrations.at(-1)?.to ??
-    entry.history.retained ??
-    (entry.history.created === "Unknown" ? null : entry.history.created);
+  const provenance = parseProvenanceSnapshot(
+    entry.provenance,
+    path.join(entry.directory, ".opsx-provenance.json"),
+  );
+  const recorded = provenance ? effectiveRevision(provenance) : null;
   let retainCurrentRevision = true;
   if (recorded) {
-    if (!sameRevisionRef(recorded, from))
-      throw new OpsxError(
-        "REVISION_DIVERGED",
-        "Recorded current schema revision differs from the live schema.",
-      );
-    const check = await checkRevision(root, recorded, client);
-    if (!check.revision || check.state !== "intact")
+    const health = await checkRecordedRevision(root, recorded, source, client);
+    const { check, retentionMissing } = health;
+    if (
+      !check.revision ||
+      !health.liveMatches ||
+      check.revision.digest !== recorded.digest ||
+      (check.state !== "intact" &&
+        !(check.state === "drift" && retentionMissing))
+    )
       throw new OpsxError(
         "REVISION_" + check.state.toUpperCase(),
         "Current schema revision is " + check.state + "; handoff is blocked.",
       );
     from = recorded;
-    retainCurrentRevision = !check.retained;
+    retainCurrentRevision = retentionMissing;
   }
   const validation = await validateChangeAgainst(
     root,
@@ -1412,10 +1476,13 @@ async function installPlan(
   for (const migration of migrations) {
     if (migration.handoff.noOp) continue;
     const entry = activeMap.get(migration.name)!;
-    const priorAssociation = parseProvenanceSnapshot(
+    const priorProvenance = parseProvenanceSnapshot(
       entry.provenance,
       path.join(entry.directory, ".opsx-provenance.json"),
-    )?.association;
+    );
+    const priorAssociation = priorProvenance
+      ? effectiveAssociation(priorProvenance)
+      : null;
     if (!priorAssociation) continue;
     if (
       !selectionReceipt ||
@@ -1703,6 +1770,7 @@ async function installPlan(
     migrations: migrations.map((item) => ({
       name: item.name,
       from: item.handoff.from,
+      liveFrom: item.fromRevision ? revisionRef(item.fromRevision) : null,
       to: targetRevision,
       inherited: item.inherited,
       ready: item.handoff.ready,
@@ -2611,10 +2679,7 @@ async function executePlan(
       try {
         let after = write.after;
         if (boundary === "migration.provenance")
-          after = after.replaceAll(
-            new Date(0).toISOString(),
-            new Date().toISOString(),
-          );
+          after = timestampAppendedMigration(write);
         action.desiredDigest = sha256(after);
         action.desiredBytes = Buffer.from(after, "utf8").toString("base64");
         await writeJournal(root, journal);

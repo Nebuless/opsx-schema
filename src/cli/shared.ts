@@ -7,11 +7,13 @@ import { OpenSpecClient } from "../openspec/client.ts";
 import { OpsxError, resolveProject } from "../domain/project.ts";
 import { changeDirectory } from "../archive/index.ts";
 import {
+  checkRecordedRevision,
+  effectiveRevision,
   readProvenance,
   revisionRef,
   retainLegacy,
 } from "../provenance/index.ts";
-import { checkRevision, retainRevision } from "../revisions/index.ts";
+import { retainRevision } from "../revisions/index.ts";
 import type { Revision, RevisionRef } from "../revisions/index.ts";
 import type { ValidationResult } from "../validation/index.ts";
 
@@ -481,36 +483,25 @@ export async function currentRevisionInfo(
     );
   const directory = await changeDirectory(root, change);
   const provenance = await readProvenance(directory);
-  const recorded =
-    provenance?.migrations.at(-1)?.to ??
-    provenance?.retained ??
-    provenance?.created ??
-    null;
+  const recorded = provenance ? effectiveRevision(provenance) : null;
   if (!recorded)
     return {
       ref: revisionRef(schemaRevision),
       createdUnder: provenance?.created ?? "Unknown",
       retainCurrentRevision: true,
     };
-  if (
-    recorded.name !== schemaRevision.name ||
-    recorded.source !== schemaRevision.source ||
-    recorded.digest !== schemaRevision.digest
-  ) {
-    throw new OpsxError(
-      "REVISION_DIVERGED",
-      "Recorded current revision for " +
-        change +
-        " does not match live schema " +
-        schemaRevision.name +
-        "; resolve schema drift before migration.",
-    );
-  }
-  const check = await checkRevision(root, recorded, client);
+  const health = await checkRecordedRevision(
+    root,
+    recorded,
+    schemaRevision,
+    client,
+  );
+  const { check, retentionMissing } = health;
   if (
     !check.revision ||
-    check.revision.source !== recorded.source ||
-    check.revision.digest !== recorded.digest
+    !health.liveMatches ||
+    check.revision.digest !== recorded.digest ||
+    (check.state !== "intact" && !(check.state === "drift" && retentionMissing))
   ) {
     throw new OpsxError(
       "REVISION_" + check.state.toUpperCase(),
@@ -524,7 +515,7 @@ export async function currentRevisionInfo(
   return {
     ref: recorded,
     createdUnder: provenance?.created ?? "Unknown",
-    retainCurrentRevision: !check.retained,
+    retainCurrentRevision: retentionMissing,
   };
 }
 
@@ -539,7 +530,9 @@ export async function retainCurrentRevision(
   const provenance = await readProvenance(await changeDirectory(root, change));
   if (
     !provenance ||
-    (!provenance.retained && provenance.migrations.length === 0)
+    (!provenance.retained &&
+      provenance.migrations.length === 0 &&
+      (provenance.rePins?.length ?? 0) === 0)
   ) {
     await retainLegacy(root, change, revisionRef(revision));
   }
