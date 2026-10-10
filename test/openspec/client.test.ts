@@ -60,6 +60,12 @@ test("accepts stable OpenSpec 1.x versions from 1.12.0 onward", async () => {
   }
 });
 
+test("exposes the trusted project root without invoking OpenSpec", async () => {
+  const { client, callsFile } = await fakeOpenSpec("1.12.0");
+  expect(client.projectRoot).toBe(path.dirname(callsFile));
+  await expect(readFile(callsFile)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 test("rejects OpenSpec versions outside the supported stable 1.x range before commands run", async () => {
   const cases = [
     { version: "0.99.0", kind: "older" },

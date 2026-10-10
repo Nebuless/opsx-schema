@@ -39,6 +39,10 @@ export class OpenSpecClient {
     private readonly executable = "openspec",
   ) {}
 
+  get projectRoot(): string {
+    return this.root;
+  }
+
   private execute(args: string[]): Promise<OpenSpecCommandResult> {
     const { promise, resolve, reject } =
       Promise.withResolvers<OpenSpecCommandResult>();
