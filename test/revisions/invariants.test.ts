@@ -57,6 +57,7 @@ async function fixture() {
     v2: path.join(root, "openspec", "schemas", "v2"),
   };
   const client = {
+    projectRoot: root,
     json: (...args: string[]) => {
       const name = args[2] as "v1" | "v2";
       return { name, source: "project", path: selection[name], shadows: [] };

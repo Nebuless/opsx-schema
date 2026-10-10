@@ -8,7 +8,11 @@ import type { SchemaEntry } from "../catalog/schemas.ts";
 import { defaultSchema, OpsxError } from "./project.ts";
 import { changeHistory } from "../provenance/index.ts";
 import type { ChangeHistory } from "../provenance/index.ts";
-import { checkRevision, resolveRevision } from "../revisions/index.ts";
+import {
+  checkRevision,
+  resolveRevision,
+  revisionRefIdentity,
+} from "../revisions/index.ts";
 import type {
   RevisionCheck,
   Revision,
@@ -214,7 +218,7 @@ function revisionReadsForRequest(
   const resolutions = new Map<string, Promise<Revision>>();
   return {
     check(ref) {
-      const key = JSON.stringify([ref.name, ref.source, ref.digest]);
+      const key = revisionRefIdentity(ref);
       let check = checks.get(key);
       if (!check) {
         check = checkRevision(root, ref, client);

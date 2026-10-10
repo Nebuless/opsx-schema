@@ -1,7 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
 import { resolveProject } from "../../src/domain/project.ts";
 import {
@@ -238,6 +247,7 @@ test("revision checks share exact identities within one read but not between rea
   }
   let schemaReads = 0;
   const client = {
+    projectRoot: root,
     json: async (...args: string[]) => {
       if (args[0] === "list")
         return {
@@ -270,4 +280,123 @@ test("revision checks share exact identities within one read but not between rea
   ]);
   await detailedChanges(root, client);
   expect(schemaReads).toBe(4);
+});
+
+test("snapshot revision caching distinguishes witnesses and bundles in either read order", async () => {
+  for (const order of [
+    ["good", "origin", "bundle"],
+    ["bundle", "origin", "good"],
+  ]) {
+    const root = await mkdtemp(
+      path.join(
+        fileURLToPath(new URL(".", import.meta.url)),
+        ".opsx-snapshot-origin-",
+      ),
+    );
+    created.push(root);
+    const schemaRoot = path.join(root, "openspec", "schemas", "v1");
+    await mkdir(schemaRoot, { recursive: true });
+    await writeFile(path.join(schemaRoot, "schema.yaml"), "name: v1\n");
+    execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "add",
+        "openspec/schemas/v1/schema.yaml",
+      ],
+      { cwd: root, stdio: "ignore" },
+    );
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "-m",
+        "fixture",
+      ],
+      { cwd: root, stdio: "ignore" },
+    );
+    const names = order.map((item) => `case-${item}`);
+    for (const name of names) {
+      const directory = path.join(root, "openspec", "changes", name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, ".openspec.yaml"), "schema: v1\n");
+    }
+    const client = {
+      projectRoot: root,
+      json: async (...args: string[]) => {
+        if (args[0] === "list")
+          return {
+            changes: names.map((name) => ({ name, status: "in-progress" })),
+          };
+        if (args[0] === "status") return { schemaName: "v1", artifacts: [] };
+        if (args[0] === "instructions")
+          return {
+            state: "ready",
+            progress: { total: 1, complete: 1, remaining: 0 },
+          };
+        if (args[0] === "schema" && args[1] === "which")
+          return {
+            name: "v1",
+            source: "project",
+            path: schemaRoot,
+            shadows: [],
+          };
+        throw new Error(`Unexpected OpenSpec command: ${args.join(" ")}`);
+      },
+    } as unknown as OpenSpecClient;
+    const revision = await resolveRevision(client, "v1");
+    await retainRevision(root, revision);
+    for (const item of order) {
+      const ref =
+        item === "origin"
+          ? {
+              ...revision,
+              origin: {
+                ...revision.origin!,
+                ino: (BigInt(revision.origin!.ino) + 1n).toString(),
+              },
+            }
+          : item === "bundle"
+            ? {
+                ...revision,
+                bundleSource: {
+                  name: "v1",
+                  version: "1",
+                  revision: "fixture",
+                  digest: "a".repeat(64),
+                },
+              }
+            : revision;
+      await recordCreation(root, `case-${item}`, ref);
+    }
+    const receiptsBefore = await Promise.all(
+      names.map((name) =>
+        readFile(
+          path.join(root, "openspec", "changes", name, ".opsx-provenance.json"),
+        ),
+      ),
+    );
+
+    const result = await detailedChanges(root, client);
+    expect(result.map((change) => change.name)).toEqual(names);
+    expect(result.map((change) => change.revision?.state)).toEqual(
+      order.map((item) => (item === "good" ? "intact" : "shadow")),
+    );
+    await Promise.all(
+      names.map(async (name, index) => {
+        const receipt = await readFile(
+          path.join(root, "openspec", "changes", name, ".opsx-provenance.json"),
+        );
+        expect(receipt).toEqual(receiptsBefore[index]);
+      }),
+    );
+  }
 });

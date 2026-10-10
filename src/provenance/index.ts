@@ -10,7 +10,12 @@ import type {
   SkillInstallHostId,
   SkillInstallPlan,
 } from "../resources/index.ts";
-import type { Revision, RevisionRef } from "../revisions/index.ts";
+import {
+  revisionRefIdentity,
+  type Revision,
+  type RevisionRef,
+} from "../revisions/index.ts";
+import { originMatchesSource } from "../revisions/origin.ts";
 
 export interface MigrationReceipt {
   from: RevisionRef;
@@ -74,7 +79,9 @@ function isRef(value: unknown): value is RevisionRef {
     path.isAbsolute(ref.source) &&
     typeof ref.digest === "string" &&
     /^[0-9a-f]{64}$/.test(ref.digest) &&
-    bundleValid
+    bundleValid &&
+    (ref.origin === undefined ||
+      originMatchesSource(ref.source, ref.origin, ref.name))
   );
 }
 
@@ -84,6 +91,7 @@ function asRef(value: RevisionRef): RevisionRef {
     source: value.source,
     digest: value.digest,
     ...(value.bundleSource ? { bundleSource: { ...value.bundleSource } } : {}),
+    ...(value.origin ? { origin: { ...value.origin } } : {}),
   };
 }
 
@@ -92,21 +100,7 @@ export function revisionRef(revision: Revision): RevisionRef {
 }
 
 function sameRevisionRef(a: RevisionRef, b: RevisionRef): boolean {
-  return (
-    a.name === b.name &&
-    a.source === b.source &&
-    a.digest === b.digest &&
-    (a.bundleSource === undefined ||
-      b.bundleSource === undefined ||
-      JSON.stringify(a.bundleSource) === JSON.stringify(b.bundleSource))
-  );
-}
-
-function sameExactRevisionRef(a: RevisionRef, b: RevisionRef): boolean {
-  return (
-    sameRevisionRef(a, b) &&
-    (a.bundleSource === undefined) === (b.bundleSource === undefined)
-  );
+  return revisionRefIdentity(a) === revisionRefIdentity(b);
 }
 
 function isSelectionAssociation(
@@ -380,7 +374,7 @@ export async function recordCreation(
   if (association !== undefined) {
     if (
       !isSelectionAssociation(association) ||
-      !sameExactRevisionRef(revision, association.effectiveRevision)
+      !sameRevisionRef(revision, association.effectiveRevision)
     ) {
       throw new OpsxError(
         "PROVENANCE_INVALID",
@@ -436,7 +430,7 @@ export async function recordSelectionAssociation(
   if (
     !isRef(revision) ||
     !isSelectionAssociation(association) ||
-    !sameExactRevisionRef(revision, association.effectiveRevision)
+    !sameRevisionRef(revision, association.effectiveRevision)
   ) {
     throw new OpsxError(
       "PROVENANCE_INVALID",
@@ -454,7 +448,7 @@ export async function recordSelectionAssociation(
   const previous = await readProvenance(directory);
   const latest =
     previous?.migrations.at(-1)?.to ?? previous?.retained ?? previous?.created;
-  if (latest && !sameExactRevisionRef(latest, revision)) {
+  if (latest && !sameRevisionRef(latest, revision)) {
     throw new OpsxError(
       "PROVENANCE_STALE",
       `Recorded revision for ${name} differs from the reviewed pinned revision.`,

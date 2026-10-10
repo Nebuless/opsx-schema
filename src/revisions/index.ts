@@ -15,6 +15,13 @@ import { OpenSpecClient } from "../openspec/client.ts";
 import { OpsxError } from "../domain/project.ts";
 import { boundedFile } from "../archive/index.ts";
 import { identifyBundledSchemaSource } from "../bundled/index.ts";
+import {
+  GitOriginWitness,
+  gitOrigin,
+  legacyCommonDirectory,
+  originMatchesSource,
+  sameCommonDirectory,
+} from "./origin.ts";
 
 export interface BundledRevisionSource {
   name: string;
@@ -27,15 +34,43 @@ export interface RevisionRef {
   source: string;
   digest: string;
   bundleSource?: BundledRevisionSource;
+  origin?: GitOriginWitness;
 }
 export interface Revision extends RevisionRef {
   shadows: unknown[];
   files: string[];
 }
+
+export function revisionRefIdentity(ref: RevisionRef): string {
+  return JSON.stringify([
+    ref.name,
+    ref.source,
+    ref.digest,
+    ref.bundleSource
+      ? [
+          ref.bundleSource.name,
+          ref.bundleSource.version,
+          ref.bundleSource.revision,
+          ref.bundleSource.digest,
+        ]
+      : null,
+    ref.origin
+      ? [
+          ref.origin.version,
+          ref.origin.commonDirectory,
+          ref.origin.dev,
+          ref.origin.ino,
+          ref.origin.relativeSchemaPath,
+        ]
+      : null,
+  ]);
+}
+
 export type RevisionCheck = {
   state: "intact" | "missing" | "drift" | "shadow";
   revision?: Revision;
   retained: boolean;
+  guidance?: string;
 };
 
 function validName(name: string): void {
@@ -103,6 +138,7 @@ async function contents(
 export async function resolveRevision(
   client: OpenSpecClient,
   name: string,
+  options: { includeOrigin?: boolean } = {},
 ): Promise<Revision> {
   validName(name);
   const selected = await schema(client, name);
@@ -124,11 +160,37 @@ export async function resolveRevision(
         digest: bundle.digest,
       }
     : undefined;
+  let origin: GitOriginWitness | undefined;
+  const selectedPathMatchesProject =
+    client.projectRoot !== undefined &&
+    path.resolve(selected.path) ===
+      path.join(client.projectRoot, "openspec", "schemas", name);
+  if (
+    options.includeOrigin !== false &&
+    (selected.source === "project" || selectedPathMatchesProject)
+  ) {
+    if (!client.projectRoot)
+      throw new OpsxError(
+        "REVISION_ORIGIN",
+        "OpenSpec project root is unavailable; re-pin from a trusted project checkout.",
+      );
+    try {
+      origin = await gitOrigin(client.projectRoot, selected.path, name);
+    } catch (error) {
+      if (error instanceof OpsxError && error.code === "REVISION_ORIGIN")
+        throw error;
+      throw new OpsxError(
+        "REVISION_ORIGIN",
+        "Git origin could not be verified; re-pin from a valid project checkout.",
+      );
+    }
+  }
   return {
     name,
     source,
     digest,
     ...(bundleSource ? { bundleSource } : {}),
+    ...(origin ? { origin } : {}),
     shadows: selected.shadows,
     files,
   };
@@ -213,6 +275,14 @@ export async function checkRevision(
   ref: RevisionRef,
   client: OpenSpecClient,
 ): Promise<RevisionCheck> {
+  if (
+    ref.origin !== undefined &&
+    !originMatchesSource(ref.source, ref.origin, ref.name)
+  )
+    throw new OpsxError(
+      "REVISION_INVALID",
+      "Invalid Git origin witness or source; explicitly re-pin this schema.",
+    );
   const saved = await snapshotPath(root, ref);
   let retained = false;
   try {
@@ -222,7 +292,9 @@ export async function checkRevision(
   }
   let revision: Revision;
   try {
-    revision = await resolveRevision(client, ref.name);
+    revision = await resolveRevision(client, ref.name, {
+      includeOrigin: ref.origin !== undefined,
+    });
   } catch (error) {
     if (error instanceof OpsxError && error.code === "OPENSPEC_FAILED")
       return { state: "missing", retained };
@@ -230,8 +302,54 @@ export async function checkRevision(
       return { state: "missing", retained };
     throw error;
   }
-  if (revision.source !== ref.source)
-    return { state: "shadow", revision, retained };
+  let sameSource = revision.source === ref.source;
+  if (ref.origin) {
+    sameSource =
+      revision.origin !== undefined &&
+      (await sameCommonDirectory(ref.origin, revision.origin));
+  } else if (!sameSource) {
+    const oldRoot = path.dirname(path.dirname(path.dirname(ref.source)));
+    const oldOrigin = await legacyCommonDirectory(
+      ref.source,
+      oldRoot,
+      ref.name,
+    );
+    const currentOrigin = client.projectRoot
+      ? await legacyCommonDirectory(
+          revision.source,
+          client.projectRoot,
+          ref.name,
+        )
+      : undefined;
+    sameSource =
+      oldOrigin !== undefined &&
+      currentOrigin !== undefined &&
+      oldOrigin.commonDirectory === currentOrigin.commonDirectory &&
+      oldOrigin.dev === currentOrigin.dev &&
+      oldOrigin.ino === currentOrigin.ino &&
+      oldOrigin.relativeSchemaPath === currentOrigin.relativeSchemaPath;
+  }
+  const sameBundle =
+    (ref.bundleSource === undefined) ===
+      (revision.bundleSource === undefined) &&
+    (!ref.bundleSource ||
+      (revision.bundleSource !== undefined &&
+        ref.bundleSource.name === revision.bundleSource.name &&
+        ref.bundleSource.version === revision.bundleSource.version &&
+        ref.bundleSource.revision === revision.bundleSource.revision &&
+        ref.bundleSource.digest === revision.bundleSource.digest));
+  if (!sameSource || revision.shadows.length || !sameBundle)
+    return {
+      state: "shadow",
+      revision,
+      retained,
+      ...(!sameSource
+        ? {
+            guidance:
+              "The recorded schema origin cannot be verified; explicitly re-pin after reviewing the current project schema.",
+          }
+        : {}),
+    };
   if (revision.digest !== ref.digest || !retained)
     return { state: "drift", revision, retained };
   return { state: "intact", revision, retained };
