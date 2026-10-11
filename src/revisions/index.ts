@@ -20,6 +20,7 @@ import {
   gitOrigin,
   legacyCommonDirectory,
   originMatchesSource,
+  projectSchemaSourceRoot,
   sameCommonDirectory,
 } from "./origin.ts";
 
@@ -70,6 +71,8 @@ export type RevisionCheck = {
   state: "intact" | "missing" | "drift" | "shadow";
   revision?: Revision;
   retained: boolean;
+  historicalOriginMismatchOnly?: true;
+  historicalOriginUnverified?: true;
   guidance?: string;
 };
 
@@ -270,10 +273,34 @@ export async function retainRevision(
   }
 }
 
+async function recordedSourcePathState(
+  source: string,
+): Promise<"existing" | "missing" | "unsafe"> {
+  let current = path.parse(source).root;
+  for (const component of path.relative(current, source).split(path.sep)) {
+    current = path.join(current, component);
+    try {
+      const entry = await lstat(current);
+      if (!entry.isDirectory() || entry.isSymbolicLink()) return "unsafe";
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+        return "missing";
+      throw error;
+    }
+  }
+  return "existing";
+}
+
 export async function checkRevision(
   root: string,
   ref: RevisionRef,
   client: OpenSpecClient,
+  options: { reviewedHistoricalOrigin?: boolean } = {},
 ): Promise<RevisionCheck> {
   if (
     ref.origin !== undefined &&
@@ -293,7 +320,8 @@ export async function checkRevision(
   let revision: Revision;
   try {
     revision = await resolveRevision(client, ref.name, {
-      includeOrigin: ref.origin !== undefined,
+      includeOrigin:
+        ref.origin !== undefined || options.reviewedHistoricalOrigin === true,
     });
   } catch (error) {
     if (error instanceof OpsxError && error.code === "OPENSPEC_FAILED")
@@ -338,11 +366,39 @@ export async function checkRevision(
         ref.bundleSource.version === revision.bundleSource.version &&
         ref.bundleSource.revision === revision.bundleSource.revision &&
         ref.bundleSource.digest === revision.bundleSource.digest));
+  let reviewableSource = ref.origin !== undefined;
+  let historicalOriginUnverified = false;
+  if (!reviewableSource && !sameSource && revision.origin) {
+    const recordedRoot = projectSchemaSourceRoot(ref.source, ref.name);
+    if (recordedRoot) {
+      const pathState = await recordedSourcePathState(ref.source);
+      historicalOriginUnverified = pathState === "missing";
+      reviewableSource =
+        pathState === "missing" ||
+        (pathState === "existing" &&
+          (await legacyCommonDirectory(ref.source, recordedRoot, ref.name)) !==
+            undefined);
+    }
+  }
   if (!sameSource || revision.shadows.length || !sameBundle)
     return {
       state: "shadow",
       revision,
       retained,
+      ...(!sameSource &&
+      !revision.shadows.length &&
+      sameBundle &&
+      reviewableSource &&
+      revision.origin !== undefined &&
+      revision.digest === ref.digest &&
+      retained
+        ? {
+            historicalOriginMismatchOnly: true as const,
+            ...(historicalOriginUnverified
+              ? { historicalOriginUnverified: true as const }
+              : {}),
+          }
+        : {}),
       ...(!sameSource
         ? {
             guidance:

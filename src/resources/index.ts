@@ -2459,6 +2459,56 @@ export async function previewSkillInstall(
   }
 }
 
+export async function inspectSelectedSkillOwnership(
+  plan: SkillInstallPlan,
+): Promise<boolean> {
+  const ownership = await readOwnership(plan.request.projectRoot);
+  const sameSource = (
+    owner: OwnershipEntry | undefined,
+    target: {
+      skill: string;
+      repository: string;
+      sourcePath: string;
+      sourceDigest: string;
+      installedDigest: string | null;
+    },
+  ): boolean =>
+    owner?.skill === target.skill &&
+    owner.repository === target.repository &&
+    owner.sourcePath === target.sourcePath &&
+    owner.digest === target.sourceDigest &&
+    owner.digest === target.installedDigest;
+  return (
+    plan.targets.every((target) => {
+      const owner = ownership.data.resources[target.relativeTarget];
+      return (
+        target.action === "noop" &&
+        sameSource(owner, target) &&
+        owner !== undefined &&
+        (!owner.hosts || owner.hosts.length === 0) &&
+        new Set(owner.profiles).size === owner.profiles.length &&
+        target.profiles.every((profile) => owner.profiles.includes(profile)) &&
+        owner.profiles.every((profile) =>
+          target.sharedProfiles.includes(profile),
+        )
+      );
+    }) &&
+    plan.skillHosts.every((host) =>
+      host.targets.every((target) => {
+        const owner = ownership.data.resources[target.relativeTarget];
+        return (
+          target.action === "noop" &&
+          sameSource(owner, target) &&
+          owner !== undefined &&
+          owner.profiles.length === 0 &&
+          owner.hosts?.length === 1 &&
+          owner.hosts[0] === host.host
+        );
+      }),
+    )
+  );
+}
+
 async function ensureDirectories(
   root: string,
   relativeDirectory: string,

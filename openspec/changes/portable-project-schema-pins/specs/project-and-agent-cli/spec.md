@@ -14,12 +14,17 @@ CLI diagnostics and pin workflows SHALL distinguish verified linked-worktree rel
 - **THEN** CLI reports an actionable unhealthy result and refuses to proceed as though intact, without changing pin or provenance.
 
 ### Requirement: CLI offers exact-change re-pin preview and recovery
-`change re-pin <change> <schema>` SHALL preview one explicit same-name pin and SHALL apply only with its fresh `--apply-token`. It MUST run strict workflow validation against retained/target-equivalent bytes; only the explicitly reviewed historical-origin mismatch MAY be allowed for this re-pin operation. Every other validation result remains mandatory, and ordinary validation MUST NOT be relaxed. Associated changes MUST supply a complete reviewed compatible bundle/profile/skill-host selection, including an explicit empty profile set when applicable; the operation MUST refuse omitted or incompatible association rather than silently transferring ownership. `--recover` SHALL inspect a pending journal without mutation and SHALL require a separate fresh token to apply recovery. CLI JSON and text MUST use the existing response and nonzero-error contracts.
+`change re-pin <change> <schema>` SHALL preview one explicit same-name pin and SHALL apply only with its fresh `--apply-token`. It MUST run strict completed workflow validation against retained/target-equivalent bytes; only the explicitly reviewed historical-origin mismatch MAY be allowed for this re-pin operation. Every other validation result remains mandatory, and ordinary validation MUST NOT be relaxed. For an eligible vanished absolute-only legacy source, preview MUST disclose that the old location and its former ownership cannot be verified, show the verified current location, and request explicit confirmation that this change should use it. The confirmation MUST bind to the exact preview and fresh Apply token; it does not authenticate the old origin. Associated changes MUST supply a complete reviewed compatible bundle/profile/skill-host selection, including an explicit empty profile set when applicable; the operation MUST refuse omitted or incompatible association rather than silently transferring ownership. `--recover` SHALL inspect a pending journal without mutation and SHALL require a separate fresh token and confirmation of that uncertainty to apply recovery. CLI JSON and text MUST use the existing response and nonzero-error contracts.
 
-#### Scenario: Explicit re-pin of ambiguous legacy source
-- **GIVEN** an exact pinned change with ambiguous old origin, intact retained snapshot and reviewed unshadowed current tracked schema of the same name and digest
-- **WHEN** the operator previews and confirms the re-pin
-- **THEN** the CLI records a new effective origin without inventing past history and without changing the pin or installed resources.
+#### Scenario: Explicit repair of vanished legacy source
+- **GIVEN** an exact pinned change whose missing absolute-only legacy source has normalized exact `openspec/schemas/<name>` shape and safe existing components, with intact retention and a reviewed, unshadowed, witnessed tracked current schema of the same name, digest and bundle
+- **WHEN** the operator sees “The old location cannot be verified. The current schema matches the saved schema content. Confirm that this change should use the current location.” and explicitly confirms the exact preview with a fresh Apply token
+- **THEN** the CLI appends a new effective origin while preserving the old record, pin, artifacts and installed resources, without claiming proof of the old source's ownership.
+
+#### Scenario: Missing-source warning cannot be bypassed
+- **GIVEN** an otherwise eligible vanished legacy source whose old ownership cannot be established
+- **WHEN** the operator omits confirmation, changes the reviewed inputs before Apply, or requests recovery with an earlier token
+- **THEN** CLI refuses the write and presents a fresh review of the current location and historical uncertainty.
 
 #### Scenario: Missing reviewed selection
 - **GIVEN** a change associated with installed skills and no explicit compatible target selection
