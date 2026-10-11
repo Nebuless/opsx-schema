@@ -1143,6 +1143,14 @@ export async function changeHistory(
   name: string,
   archived = false,
 ): Promise<ChangeHistory> {
+  return (await readChangeHistory(root, name, archived)).history;
+}
+
+export async function readChangeHistory(
+  root: string,
+  name: string,
+  archived = false,
+): Promise<{ history: ChangeHistory; effectiveRevision: RevisionRef | null }> {
   const directory = await changeDirectory(root, name, archived);
   const record = await readProvenance(directory);
   let metadata: unknown;
@@ -1176,16 +1184,19 @@ export async function changeHistory(
       ? `Recorded revision ${latest.name} differs from live schema ${currentSchema}.`
       : null;
   return {
-    name,
-    created: record?.created ?? "Unknown",
-    currentSchema,
-    inherited,
-    migrations: record?.migrations ?? [],
-    ...(record?.rePins ? { rePins: record.rePins } : {}),
-    ...(record?.establishments
-      ? { establishments: record.establishments }
-      : {}),
-    ...(record?.retained ? { retained: record.retained } : {}),
-    divergence,
+    history: {
+      name,
+      created: record?.created ?? "Unknown",
+      currentSchema,
+      inherited,
+      migrations: record?.migrations ?? [],
+      ...(record?.rePins ? { rePins: record.rePins } : {}),
+      ...(record?.establishments
+        ? { establishments: record.establishments }
+        : {}),
+      ...(record?.retained ? { retained: record.retained } : {}),
+      divergence,
+    },
+    effectiveRevision: latest,
   };
 }

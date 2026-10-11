@@ -282,6 +282,91 @@ test("revision checks share exact identities within one read but not between rea
   expect(schemaReads).toBe(4);
 });
 
+test("detailed reads use one provenance receipt for history and revision", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "opsx-snapshot-receipt-"));
+  created.push(root);
+  const directory = path.join(root, "openspec", "changes", "sample");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(root, "openspec", "config.yaml"), "schema: v1\n");
+  await writeFile(path.join(directory, ".openspec.yaml"), "schema: v1\n");
+  const before = {
+    version: 2,
+    created: { name: "v1", source: "/schemas/before", digest: "a".repeat(64) },
+    migrations: [],
+    establishments: [],
+  };
+  const after = {
+    ...before,
+    created: { name: "v1", source: "/schemas/after", digest: "b".repeat(64) },
+  };
+  const file = path.join(directory, ".opsx-provenance.json");
+  await writeFile(file, JSON.stringify(before));
+
+  const script = `
+    const { mock } = await import("bun:test");
+    const { writeFile } = await import("node:fs/promises");
+    const archiveUrl = ${JSON.stringify(new URL("../../src/archive/index.ts", import.meta.url).href)};
+    const snapshotUrl = ${JSON.stringify(new URL("../../src/domain/snapshot.ts", import.meta.url).href)};
+    const projectUrl = ${JSON.stringify(new URL("../../src/domain/project.ts", import.meta.url).href)};
+    const archive = await import(archiveUrl);
+    const originalBoundedFile = archive.boundedFile;
+    const { OpsxError } = await import(projectUrl);
+    const root = ${JSON.stringify(root)};
+    const file = ${JSON.stringify(file)};
+    const before = ${JSON.stringify(before)};
+    const after = ${JSON.stringify(after)};
+    let reads = 0;
+    mock.module(archiveUrl, () => ({
+      ...archive,
+      boundedFile: async (directory, relative) => {
+        const result = await originalBoundedFile(directory, relative);
+        if (relative === ".opsx-provenance.json") {
+          reads++;
+          if (reads === 1) await writeFile(file, JSON.stringify(after));
+        }
+        return result;
+      },
+    }));
+    const { detailedChange, detailedChanges } = await import(snapshotUrl);
+    const client = {
+      projectRoot: root,
+      json: async (...args) => {
+        if (args[0] === "list") return { changes: [{ name: "sample", status: "active" }] };
+        if (args[0] === "status") return { schemaName: "v1", artifacts: [] };
+        if (args[0] === "instructions") return { state: "ready" };
+        throw new OpsxError("OPENSPEC_FAILED", "schema unavailable");
+      },
+    };
+    const single = await detailedChange(root, client, "sample");
+    const singleReads = reads;
+    await writeFile(file, JSON.stringify(before));
+    reads = 0;
+    const [listed] = await detailedChanges(root, client);
+    process.stdout.write(JSON.stringify({ single, singleReads, listed, listedReads: reads }));
+  `;
+  const result = Bun.spawnSync({
+    cmd: [process.execPath, "-e", script],
+    cwd: path.resolve(import.meta.dir, "../.."),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(new TextDecoder().decode(result.stderr)).toBe("");
+  expect(result.exitCode).toBe(0);
+  const output = JSON.parse(new TextDecoder().decode(result.stdout));
+  for (const [detail, reads] of [
+    [output.single, output.singleReads],
+    [output.listed, output.listedReads],
+  ] as const) {
+    expect(reads).toBe(1);
+    expect(detail.history.created).toEqual(before.created);
+    expect(detail.revision).toMatchObject({
+      state: "missing",
+      source: before.created.source,
+      digest: before.created.digest,
+    });
+  }
+});
+
 test("snapshot revision caching distinguishes witnesses and bundles in either read order", async () => {
   for (const order of [
     ["good", "origin", "bundle"],

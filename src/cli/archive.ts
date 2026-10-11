@@ -3,6 +3,7 @@ import { OpsxError } from "../domain/project.ts";
 import { changeDirectory, listArchived } from "../archive/index.ts";
 import { withProjectMutationLock } from "../project-lock.ts";
 import { resolveRevision } from "../revisions/index.ts";
+import { checkRecordedRevision } from "../provenance/index.ts";
 import type { RevisionRef } from "../revisions/index.ts";
 import type { ActionResult, ActionTarget, InternalPlan } from "./shared.ts";
 import {
@@ -141,9 +142,18 @@ export async function archiveChange(
         client,
         current.data.currentRevision.name,
       );
+      const health = await checkRecordedRevision(
+        current.target.root,
+        current.data.currentRevision,
+        liveRevision,
+        client,
+      );
       if (
-        liveRevision.source !== current.data.currentRevision.source ||
-        liveRevision.digest !== current.data.currentRevision.digest
+        !health.check.revision ||
+        !health.liveMatches ||
+        health.check.revision.digest !== current.data.currentRevision.digest ||
+        (health.check.state !== "intact" &&
+          !(health.check.state === "drift" && health.retentionMissing))
       ) {
         throw new OpsxError(
           "STALE_PREVIEW",

@@ -17,6 +17,7 @@ import { OpenSpecClient } from "../openspec/client.ts";
 import type { OpenSpecCommandResult } from "../openspec/client.ts";
 import {
   changeHistory,
+  effectiveRevision,
   readProvenance,
   type Provenance,
 } from "../provenance/index.ts";
@@ -73,12 +74,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function latestRevision(
   provenance: Provenance | null,
 ): RevisionRef | undefined {
-  return (
-    provenance?.migrations.at(-1)?.to ??
-    provenance?.retained ??
-    provenance?.created ??
-    undefined
-  );
+  return provenance ? (effectiveRevision(provenance) ?? undefined) : undefined;
 }
 
 function revisionFor(
@@ -87,7 +83,7 @@ function revisionFor(
 ): RevisionRef | undefined {
   if (!provenance) return undefined;
   const candidates = [
-    provenance.migrations.at(-1)?.to,
+    effectiveRevision(provenance) ?? undefined,
     provenance.retained,
     provenance.created,
     ...provenance.migrations.flatMap((migration) => [

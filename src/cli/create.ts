@@ -8,6 +8,7 @@ import {
   readProvenance,
   recordCreation,
   revisionRef,
+  sameRevisionRef,
 } from "../provenance/index.ts";
 import type { ChangeSelectionAssociation } from "../provenance/index.ts";
 import { readSelectionReceipt } from "../switch/index.ts";
@@ -309,10 +310,7 @@ export async function createChange(
       client,
       current.data.schema.name,
     );
-    if (
-      liveRevision.source !== current.data.schema.source ||
-      liveRevision.digest !== current.data.schema.digest
-    ) {
+    if (!sameRevisionRef(revisionRef(liveRevision), current.data.schema)) {
       throw new OpsxError(
         "STALE_PREVIEW",
         "Effective schema revision changed immediately before creation.",
