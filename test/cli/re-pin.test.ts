@@ -1,32 +1,39 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import type { BigIntStats, PathLike, StatOptions, Stats } from "node:fs";
+import { existsSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import {
+  chmod,
   cp,
   mkdir,
-  readFile,
   readdir,
+  readFile,
   readlink,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
 import { changeDirectory } from "../../src/archive/index.ts";
-import { previewChangeRePin } from "../../src/cli/repin.ts";
+import { applyChangeRePin, previewChangeRePin } from "../../src/cli/repin.ts";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
+import { acquireProjectMutationLock } from "../../src/project-lock.ts";
 import { revisionRef } from "../../src/provenance/index.ts";
-import { resolveRevision, retainRevision } from "../../src/revisions/index.ts";
 import {
   applySkillInstall,
   previewSkillInstall,
 } from "../../src/resources/index.ts";
+import { resolveRevision, retainRevision } from "../../src/revisions/index.ts";
 import {
   validateChange,
   validateChangeAgainst,
 } from "../../src/validation/index.ts";
 import { linkedFixture } from "./portable-fixture.ts";
+
 const roots: string[] = [];
 async function completeWorkflow(root: string, change: string) {
   const dir = await changeDirectory(root, change);
@@ -183,7 +190,474 @@ test("healthy linked-worktree pin is an event-free no-op", async () => {
   expect(
     JSON.parse(response.output).data.data.historicalOrigin,
   ).toBeUndefined();
+  const applied = await applyChangeRePin({
+    rootInput: f.linked,
+    changeInput: f.change,
+    schemaInput: "portable",
+    selection: { profiles: [], noProfiles: false, skillHosts: [] },
+  });
+  expect(applied.ok).toBe(true);
+  if (applied.ok) expect(applied.data.noOp).toBe(true);
   expect(await treeBytes(f.linked)).toEqual(before);
+});
+
+test("reviewed missing-origin re-pin applies one event and preserves unknown history", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const provenanceFile = path.join(directory, ".opsx-provenance.json");
+  const provenance = JSON.parse(await readFile(provenanceFile, "utf8"));
+  delete provenance.created.origin;
+  provenance.created.source = path.join(
+    path.dirname(f.linked),
+    "vanished",
+    "openspec/schemas/portable",
+  );
+  const historicalSource = provenance.created.source;
+  await writeFile(provenanceFile, JSON.stringify(provenance));
+  await chmod(provenanceFile, 0o640);
+
+  const reviewed = cli(f.linked, "change", "re-pin", f.change, "portable");
+  expect(reviewed.code, reviewed.output).toBe(0);
+  const envelope = JSON.parse(reviewed.output);
+  const preview = envelope.data.data;
+  expect(preview.guardDigest).toBeUndefined();
+  expect(preview.inputDigest).toBeUndefined();
+  expect(preview.guardRoutes).toBeUndefined();
+  const beforePin = await readFile(path.join(directory, ".openspec.yaml"));
+  const beforeArtifacts = await treeBytes(directory);
+  const missingConfirmation = cli(
+    f.linked,
+    "change",
+    "re-pin",
+    f.change,
+    "portable",
+    "--apply-token",
+    envelope.data.confirmation.token,
+  );
+  expect(missingConfirmation.code).not.toBe(0);
+  expect(JSON.parse(missingConfirmation.output).data.error.code).toBe(
+    "REPIN_CONFIRMATION_REQUIRED",
+  );
+  const wrongConfirmation = cli(
+    f.linked,
+    "change",
+    "re-pin",
+    f.change,
+    "portable",
+    "--apply-token",
+    envelope.data.confirmation.token,
+    "--confirm",
+    "The old location can be verified.",
+  );
+  expect(wrongConfirmation.code).not.toBe(0);
+  expect(JSON.parse(wrongConfirmation.output).data.error.code).toBe(
+    "REPIN_CONFIRMATION_MISMATCH",
+  );
+  const originalUmask = process.umask(0o077);
+  const applied = cli(
+    f.linked,
+    "change",
+    "re-pin",
+    f.change,
+    "portable",
+    "--apply-token",
+    envelope.data.confirmation.token,
+    "--confirm",
+    envelope.data.confirmation.exactTarget,
+  );
+  process.umask(originalUmask);
+  expect(applied.code, applied.output).toBe(0);
+  expect(JSON.parse(applied.output).data.phase).toBe("applied");
+
+  const updated = JSON.parse(await readFile(provenanceFile, "utf8"));
+  expect(updated.created.source).toBe(historicalSource);
+  expect(updated.created.origin).toBeUndefined();
+  expect(updated.rePins).toHaveLength(1);
+  expect(updated.rePins[0]).toMatchObject({
+    from: provenance.created,
+    to: preview.to,
+    associationBefore: null,
+    associationAfter: null,
+  });
+  expect(updated.rePins[0].at).toEqual(expect.any(String));
+  expect(await readFile(path.join(directory, ".openspec.yaml"))).toEqual(
+    beforePin,
+  );
+  expect((await stat(provenanceFile)).mode & 0o777).toBe(0o640);
+  expect(await treeBytes(directory)).not.toEqual(beforeArtifacts);
+  const journal = JSON.parse(
+    await readFile(
+      path.join(f.linked, "openspec/.opsx/re-pin-journal.json"),
+      "utf8",
+    ),
+  );
+  expect(journal.state).toBe("complete");
+  expect(journal.version).toBe(2);
+  expect(
+    (await stat(path.join(f.linked, "openspec/.opsx/re-pin-journal.json")))
+      .mode & 0o777,
+  ).toBe(0o600);
+  expect(journal.expectedDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(journal.intendedDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect((await readdir(directory)).some((name) => name.endsWith(".tmp"))).toBe(
+    false,
+  );
+  expect(
+    (await readdir(path.join(f.linked, "openspec/.opsx"))).some((name) =>
+      name.endsWith(".tmp"),
+    ),
+  ).toBe(false);
+  journal.state = "partial";
+  await writeFile(
+    path.join(f.linked, "openspec/.opsx/re-pin-journal.json"),
+    JSON.stringify(journal),
+  );
+  const receiptAfterApply = await readFile(provenanceFile);
+  const unresolvedApply = cli(
+    f.linked,
+    "change",
+    "re-pin",
+    f.change,
+    "portable",
+    "--apply-token",
+    envelope.data.confirmation.token,
+    "--confirm",
+    envelope.data.confirmation.exactTarget,
+  );
+  expect(unresolvedApply.code).not.toBe(0);
+  expect(JSON.parse(unresolvedApply.output).data.error.code).toBe(
+    "REPIN_RECOVERY_REQUIRED",
+  );
+  expect(await readFile(provenanceFile)).toEqual(receiptAfterApply);
+});
+
+test("Apply rejects stale artifact, config, pin, and same-byte receipt replacements before journaling", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const original = JSON.parse(await readFile(receipt, "utf8"));
+  delete original.created.origin;
+  original.created.source = path.join(
+    path.dirname(f.linked),
+    "vanished",
+    "openspec/schemas/portable",
+  );
+  await writeFile(receipt, JSON.stringify(original));
+  const proposal = path.join(directory, "proposal.md");
+  const originalProposal = await readFile(proposal);
+  const config = path.join(f.linked, "openspec/config.yaml");
+  const originalConfig = await readFile(config);
+  const pin = path.join(directory, ".openspec.yaml");
+
+  const applyReviewed = (review: { token: string; confirm: string }) =>
+    cli(
+      f.linked,
+      "change",
+      "re-pin",
+      f.change,
+      "portable",
+      "--apply-token",
+      review.token,
+      "--confirm",
+      review.confirm,
+    );
+  const getReview = () => {
+    const result = cli(f.linked, "change", "re-pin", f.change, "portable");
+    expect(result.code, result.output).toBe(0);
+    const envelope = JSON.parse(result.output).data;
+    return {
+      token: envelope.confirmation.token as string,
+      confirm: envelope.confirmation.exactTarget as string,
+    };
+  };
+  const expectStaleWithoutJournal = (result: ReturnType<typeof cli>) => {
+    expect(result.code).not.toBe(0);
+    expect(JSON.parse(result.output).data.error.code).toBe("STALE_PREVIEW");
+    expect(
+      existsSync(path.join(f.linked, "openspec/.opsx/re-pin-journal.json")),
+    ).toBe(false);
+  };
+
+  const artifactReview = getReview();
+  await writeFile(
+    proposal,
+    Buffer.concat([originalProposal, Buffer.from("\nchanged\n")]),
+  );
+  expectStaleWithoutJournal(applyReviewed(artifactReview));
+  await writeFile(proposal, originalProposal);
+
+  const configReview = getReview();
+  await writeFile(
+    config,
+    Buffer.concat([originalConfig, Buffer.from("\n# changed\n")]),
+  );
+  expectStaleWithoutJournal(applyReviewed(configReview));
+  await writeFile(config, originalConfig);
+
+  const pinReview = getReview();
+  const pinBytes = await readFile(pin);
+  const pinMode = (await stat(pin)).mode & 0o777;
+  const pinStage = `${pin}.same-bytes`;
+  await writeFile(pinStage, pinBytes, { mode: pinMode });
+  await chmod(pinStage, pinMode);
+  await rename(pinStage, pin);
+  expectStaleWithoutJournal(applyReviewed(pinReview));
+
+  const receiptReview = getReview();
+  const receiptBytes = await readFile(receipt);
+  const receiptMode = (await stat(receipt)).mode & 0o777;
+  const receiptStage = `${receipt}.same-bytes`;
+  await writeFile(receiptStage, receiptBytes, { mode: receiptMode });
+  await chmod(receiptStage, receiptMode);
+  await rename(receiptStage, receipt);
+  const unchangedExternalBytes = await readFile(receipt);
+  expectStaleWithoutJournal(applyReviewed(receiptReview));
+  expect(await readFile(receipt)).toEqual(unchangedExternalBytes);
+});
+
+test("Postflight failure retains external edits and a partial journal after receipt activation", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const original = JSON.parse(await readFile(receipt, "utf8"));
+  delete original.created.origin;
+  original.created.source = path.join(
+    path.dirname(f.linked),
+    "vanished",
+    "openspec/schemas/portable",
+  );
+  await writeFile(receipt, JSON.stringify(original));
+  const priorReceipt = await readFile(receipt);
+  const config = path.join(f.linked, "openspec/config.yaml");
+  const priorConfig = await readFile(config);
+  const externalConfig = Buffer.concat([
+    priorConfig,
+    Buffer.from("\n# concurrent edit\n"),
+  ]);
+  const review = await previewChangeRePin(f.linked, f.change, "portable", {
+    profiles: [],
+    noProfiles: false,
+    skillHosts: [],
+  });
+  expect(review.ok).toBe(true);
+  if (!review.ok || !review.confirmation) return;
+
+  let preservedExternalEdit = false;
+  const originalCommandResult = OpenSpecClient.prototype.commandResult;
+  const validation = spyOn(
+    OpenSpecClient.prototype,
+    "commandResult",
+  ).mockImplementation(async function (
+    this: OpenSpecClient,
+    ..._args: string[]
+  ) {
+    if (
+      this.projectRoot === f.linked &&
+      !preservedExternalEdit &&
+      !(await readFile(receipt)).equals(priorReceipt)
+    ) {
+      await writeFile(config, externalConfig);
+      preservedExternalEdit = true;
+    }
+    return originalCommandResult.apply(this, _args);
+  });
+  try {
+    const result = await applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      applyToken: review.confirmation.token,
+      confirmationText: review.confirmation.exactTarget,
+      selection: { profiles: [], noProfiles: false, skillHosts: [] },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("REPIN_POSTFLIGHT");
+  } finally {
+    validation.mockRestore();
+  }
+
+  expect(preservedExternalEdit).toBe(true);
+  expect(await readFile(config)).toEqual(externalConfig);
+  const activatedReceipt = JSON.parse(await readFile(receipt, "utf8"));
+  expect(activatedReceipt.rePins).toHaveLength(1);
+  const journal = JSON.parse(
+    await readFile(
+      path.join(f.linked, "openspec/.opsx/re-pin-journal.json"),
+      "utf8",
+    ),
+  );
+  expect(journal.state).toBe("partial");
+  expect(journal.error).toContain("postflight");
+  expect(journal.expectedDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(journal.intendedDigest).toMatch(/^[a-f0-9]{64}$/);
+});
+
+test("Apply refuses a redirected change ancestor without replacing the receipt", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const value = JSON.parse(await readFile(receipt, "utf8"));
+  delete value.created.origin;
+  value.created.source = path.join(
+    path.dirname(f.linked),
+    "vanished",
+    "openspec/schemas/portable",
+  );
+  await writeFile(receipt, JSON.stringify(value));
+  const selected = { profiles: [], noProfiles: false, skillHosts: [] };
+  const review = await previewChangeRePin(
+    f.linked,
+    f.change,
+    "portable",
+    selected,
+  );
+  expect(review.ok).toBe(true);
+  if (!review.ok) return;
+  const before = await readFile(receipt);
+  const changes = path.join(f.linked, "openspec/changes");
+  const savedChanges = `${changes}.saved`;
+  await rename(changes, savedChanges);
+  await symlink(os.tmpdir(), changes);
+  try {
+    const result = await applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      applyToken: review.confirmation?.token,
+      confirmationText: review.confirmation?.exactTarget,
+      selection: selected,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("UNSAFE_PATH");
+    expect(
+      existsSync(path.join(f.linked, "openspec/.opsx/re-pin-journal.json")),
+    ).toBe(false);
+  } finally {
+    await rm(changes);
+    await rename(savedChanges, changes);
+  }
+  expect(await readFile(receipt)).toEqual(before);
+});
+
+test("Apply preserves an unrelated redirected journal stage", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const value = JSON.parse(await readFile(receipt, "utf8"));
+  delete value.created.origin;
+  value.created.source = path.join(
+    path.dirname(f.linked),
+    "vanished",
+    "openspec/schemas/portable",
+  );
+  await writeFile(receipt, JSON.stringify(value));
+  const selected = { profiles: [], noProfiles: false, skillHosts: [] };
+  const review = await previewChangeRePin(
+    f.linked,
+    f.change,
+    "portable",
+    selected,
+  );
+  expect(review.ok).toBe(true);
+  if (!review.ok || !review.confirmation) return;
+  const fixedId = "00000000-0000-4000-8000-000000000001";
+  const stage = path.join(
+    f.linked,
+    `openspec/.opsx/.re-pin-journal.json.${fixedId}.tmp`,
+  );
+  await symlink(os.tmpdir(), stage);
+  const before = await readFile(receipt);
+  const uuidSpy = spyOn(
+    await import("node:crypto"),
+    "randomUUID",
+  ).mockReturnValue(fixedId);
+  try {
+    const result = await applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      applyToken: review.confirmation.token,
+      confirmationText: review.confirmation.exactTarget,
+      selection: selected,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("REPIN_STAGE_CONFLICT");
+    expect(await readFile(receipt)).toEqual(before);
+    expect(
+      existsSync(path.join(f.linked, "openspec/.opsx/re-pin-journal.json")),
+    ).toBe(false);
+    expect(await readlink(stage)).toBe(os.tmpdir());
+  } finally {
+    uuidSpy.mockRestore();
+    await rm(stage);
+  }
+});
+
+test("Apply shares the project mutation lock and refuses concurrent mutation", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const value = JSON.parse(await readFile(receipt, "utf8"));
+  delete value.created.origin;
+  value.created.source = path.join(
+    path.dirname(f.linked),
+    "vanished",
+    "openspec/schemas/portable",
+  );
+  await writeFile(receipt, JSON.stringify(value));
+  const selected = { profiles: [], noProfiles: false, skillHosts: [] };
+  const review = await previewChangeRePin(
+    f.linked,
+    f.change,
+    "portable",
+    selected,
+  );
+  expect(review.ok).toBe(true);
+  if (!review.ok || !review.confirmation) return;
+  const before = await readFile(receipt);
+  const release = await acquireProjectMutationLock(f.linked);
+  try {
+    const result = await applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      applyToken: review.confirmation.token,
+      confirmationText: review.confirmation.exactTarget,
+      selection: selected,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("PROJECT_LOCKED");
+    expect(await readFile(receipt)).toEqual(before);
+    expect(
+      existsSync(path.join(f.linked, "openspec/.opsx/re-pin-journal.json")),
+    ).toBe(false);
+  } finally {
+    await release();
+  }
 });
 
 test("witnessed project pin permits reviewed cross-clone preview", async () => {
@@ -555,6 +1029,66 @@ test("associated empty profiles require explicit compatible review", async () =>
   expect(JSON.parse(reviewed.output).data.data.noOp).toBe(true);
   expect(await treeBytes(f.linked)).toEqual(before);
 });
+
+test("associated explicit empty selection applies without resource writes", async () => {
+  const f = await linkedFixture(roots, true);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const provenance = JSON.parse(await readFile(receipt, "utf8"));
+  const unknown = {
+    ...provenance.created,
+    source: path.join(
+      path.dirname(f.linked),
+      "vanished/openspec/schemas/portable",
+    ),
+  };
+  delete unknown.origin;
+  provenance.created = unknown;
+  provenance.association.effectiveRevision = unknown;
+  provenance.establishments[0].association.effectiveRevision = unknown;
+  await writeFile(receipt, JSON.stringify(provenance));
+  const selection = {
+    profiles: [],
+    noProfiles: true,
+    skillHosts: [],
+    bundle: "default" as const,
+  };
+  const review = await previewChangeRePin(
+    f.linked,
+    f.change,
+    "portable",
+    selection,
+  );
+  expect(review.ok, JSON.stringify(review)).toBe(true);
+  if (!review.ok || !review.confirmation) return;
+  const beforePin = await readFile(path.join(directory, ".openspec.yaml"));
+  const beforeSchema = await treeBytes(
+    path.join(f.linked, "openspec/schemas/portable"),
+  );
+  const result = await applyChangeRePin({
+    rootInput: f.linked,
+    changeInput: f.change,
+    schemaInput: "portable",
+    applyToken: review.confirmation.token,
+    confirmationText: review.confirmation.exactTarget,
+    selection,
+  });
+  expect(result.ok, JSON.stringify(result)).toBe(true);
+  const after = JSON.parse(await readFile(receipt, "utf8"));
+  expect(after.rePins).toHaveLength(1);
+  expect(after.created).toEqual(unknown);
+  expect(after.rePins[0].associationAfter.profiles).toEqual([]);
+  expect(await readFile(path.join(directory, ".openspec.yaml"))).toEqual(
+    beforePin,
+  );
+  expect(
+    await treeBytes(path.join(f.linked, "openspec/schemas/portable")),
+  ).toEqual(beforeSchema);
+}, 30000);
 test("unsafe pin, target, retention, history, and workflow refuse without writes", async () => {
   const scenarios: Array<[string, (root: string) => Promise<void>]> = [
     [
@@ -968,6 +1502,7 @@ test("installed profile target permits a physical alias owner and rejects false 
   );
   expect(selectedWrong.ok).toBe(false);
   const target = path.join(f.linked, ".agents/skills/guard-skill");
+  const installedSkill = await readFile(path.join(target, "SKILL.md"));
   await writeFile(path.join(target, "SKILL.md"), "edited\n");
   const beforeEdited = await treeBytes(f.linked);
   expect((await review()).ok).toBe(false);
@@ -976,4 +1511,765 @@ test("installed profile target permits a physical alias owner and rejects false 
   const beforeMissing = await treeBytes(f.linked);
   expect((await review()).ok).toBe(false);
   expect(await treeBytes(f.linked)).toEqual(beforeMissing);
-});
+  await mkdir(target, { recursive: true });
+  await writeFile(path.join(target, "SKILL.md"), installedSkill);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const unknown = {
+    ...provenance.created,
+    source: path.join(
+      path.dirname(f.linked),
+      "vanished/openspec/schemas/portable",
+    ),
+  };
+  delete unknown.origin;
+  provenance.created = unknown;
+  provenance.association.effectiveRevision = unknown;
+  provenance.establishments[0].association.effectiveRevision = unknown;
+  await writeFile(provenancePath, JSON.stringify(provenance));
+  const selection = {
+    profiles: ["codex"],
+    noProfiles: false,
+    skillHosts: [],
+    bundle: "default" as const,
+  };
+  const apply = (token: string, exactTarget: string) =>
+    applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      applyToken: token,
+      confirmationText: exactTarget,
+      selection,
+      resourceOptions,
+    });
+  const ready = await review();
+  expect(ready.ok, JSON.stringify(ready)).toBe(true);
+  if (!ready.ok || !ready.confirmation) return;
+  const priorReceipt = await readFile(provenancePath);
+  await writeFile(path.join(target, "SKILL.md"), "edited\n");
+  expect(
+    (await apply(ready.confirmation.token, ready.confirmation.exactTarget)).ok,
+  ).toBe(false);
+  expect(await readFile(provenancePath)).toEqual(priorReceipt);
+  await writeFile(path.join(target, "SKILL.md"), installedSkill);
+  const alteredOwnership = JSON.parse(originalOwnership);
+  alteredOwnership.resources[".agents/skills/guard-skill"].repository =
+    "other/skills";
+  await writeFile(ownershipPath, JSON.stringify(alteredOwnership));
+  expect(
+    (await apply(ready.confirmation.token, ready.confirmation.exactTarget)).ok,
+  ).toBe(false);
+  expect(await readFile(provenancePath)).toEqual(priorReceipt);
+  await writeFile(ownershipPath, originalOwnership);
+  const fresh = await review();
+  expect(fresh.ok, JSON.stringify(fresh)).toBe(true);
+  if (!fresh.ok || !fresh.confirmation) return;
+  const beforePin = await readFile(path.join(directory, ".openspec.yaml"));
+  const beforeSchema = await treeBytes(schemaRoot);
+  const applied = await apply(
+    fresh.confirmation.token,
+    fresh.confirmation.exactTarget,
+  );
+  expect(applied.ok, JSON.stringify(applied)).toBe(true);
+  const updated = JSON.parse(await readFile(provenancePath, "utf8"));
+  expect(updated.rePins).toHaveLength(1);
+  expect(updated.created).toEqual(unknown);
+  expect(await readFile(path.join(target, "SKILL.md"))).toEqual(installedSkill);
+  expect(await readFile(ownershipPath, "utf8")).toBe(originalOwnership);
+  expect(await readFile(path.join(directory, ".openspec.yaml"))).toEqual(
+    beforePin,
+  );
+  expect(await treeBytes(schemaRoot)).toEqual(beforeSchema);
+}, 90000);
+
+async function reviewedApplyFixture() {
+  const fixture = await linkedFixture(roots);
+  await completeWorkflow(fixture.linked, fixture.change);
+  execFileSync("git", ["worktree", "remove", "--force", fixture.original], {
+    cwd: fixture.linked,
+  });
+  const directory = await changeDirectory(fixture.linked, fixture.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const value = JSON.parse(await readFile(receipt, "utf8"));
+  delete value.created.origin;
+  value.created.source = path.join(
+    path.dirname(fixture.linked),
+    "vanished/openspec/schemas/portable",
+  );
+  await writeFile(receipt, JSON.stringify(value));
+  const selection = { profiles: [], noProfiles: false, skillHosts: [] };
+  const review = await previewChangeRePin(
+    fixture.linked,
+    fixture.change,
+    "portable",
+    selection,
+  );
+  if (!review.ok || !review.confirmation)
+    throw new Error(`Expected a ready re-pin: ${JSON.stringify(review)}`);
+  const confirmed = review.confirmation;
+  const journal = path.join(
+    fixture.linked,
+    "openspec/.opsx/re-pin-journal.json",
+  );
+  const config = path.join(fixture.linked, "openspec/config.yaml");
+  const apply = () =>
+    applyChangeRePin({
+      rootInput: fixture.linked,
+      changeInput: fixture.change,
+      schemaInput: "portable",
+      applyToken: confirmed.token,
+      confirmationText: confirmed.exactTarget,
+      selection,
+    });
+  return { fixture, receipt, journal, config, apply };
+}
+
+for (const boundary of ["receipt", "completion"] as const) {
+  test(`Apply catches config edits during ${boundary} stage sync`, async () => {
+    const f = await reviewedApplyFixture();
+    const originalReceipt = await readFile(f.receipt);
+    const originalMode = (await stat(f.receipt)).mode & 0o777;
+    const originalOpen = fsPromises.open;
+    let changed = false;
+    const openSpy = spyOn(fsPromises, "open").mockImplementation(
+      async (...args: Parameters<typeof fsPromises.open>) => {
+        const handle = await originalOpen(...args);
+        const file = String(args[0]);
+        if (
+          file.startsWith(path.dirname(f.journal)) &&
+          ((boundary === "receipt" &&
+            file.includes(".opsx-provenance.json.")) ||
+            (boundary === "completion" &&
+              file.includes(".re-pin-journal.json.")))
+        ) {
+          const originalSync = handle.sync.bind(handle);
+          spyOn(handle, "sync").mockImplementation(async () => {
+            await originalSync();
+            if (
+              !changed &&
+              (boundary === "receipt" ||
+                !(await fsPromises.readFile(f.receipt)).equals(originalReceipt))
+            ) {
+              await fsPromises.appendFile(
+                f.config,
+                "# changed during stage sync\n",
+              );
+              changed = true;
+            }
+          });
+        }
+        return handle;
+      },
+    );
+    let result;
+    try {
+      result = await f.apply();
+    } finally {
+      openSpy.mockRestore();
+    }
+    expect(changed).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.code).toMatch(/STALE_PREVIEW|REPIN_POSTFLIGHT/);
+    const journal = JSON.parse(await readFile(f.journal, "utf8"));
+    expect(journal.state).toBe("partial");
+    if (boundary === "receipt") {
+      expect(await readFile(f.receipt)).toEqual(originalReceipt);
+      expect((await stat(f.receipt)).mode & 0o777).toBe(originalMode);
+    } else {
+      expect(JSON.parse(await readFile(f.receipt, "utf8")).rePins).toHaveLength(
+        1,
+      );
+    }
+  }, 30000);
+}
+
+for (const input of ["artifact", "resource", "route"] as const) {
+  test(`Apply leaves receipt untouched for ${input} edits during receipt stage sync`, async () => {
+    const f = await reviewedApplyFixture();
+    const originalReceipt = await readFile(f.receipt);
+    const originalMode = (await stat(f.receipt)).mode & 0o777;
+    const artifact = path.join(path.dirname(f.receipt), "proposal.md");
+    const resource = path.join(
+      f.fixture.linked,
+      "openspec/schemas/portable/skills.txt",
+    );
+    const route = path.join(f.fixture.linked, "openspec/schemas");
+    const originalOpen = fsPromises.open;
+    let changed = false;
+    const openSpy = spyOn(fsPromises, "open").mockImplementation(
+      async (...args: Parameters<typeof fsPromises.open>) => {
+        const handle = await originalOpen(...args);
+        const file = String(args[0]);
+        if (
+          file.startsWith(path.dirname(f.journal)) &&
+          file.includes(".opsx-provenance.json.")
+        ) {
+          const originalSync = handle.sync.bind(handle);
+          spyOn(handle, "sync").mockImplementation(async () => {
+            await originalSync();
+            if (changed) return;
+            changed = true;
+            if (input === "route") await chmod(route, 0o700);
+            else
+              await fsPromises.appendFile(
+                input === "artifact" ? artifact : resource,
+                "\n# edited during receipt staging\n",
+              );
+          });
+        }
+        return handle;
+      },
+    );
+    let result;
+    try {
+      result = await f.apply();
+    } finally {
+      openSpy.mockRestore();
+    }
+    expect(changed).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(await readFile(f.receipt)).toEqual(originalReceipt);
+    expect((await stat(f.receipt)).mode & 0o777).toBe(originalMode);
+    const journal = JSON.parse(await readFile(f.journal, "utf8"));
+    expect(["prepared", "partial"]).toContain(journal.state);
+    if (input === "route") expect((await stat(route)).mode & 0o777).toBe(0o700);
+    else
+      expect(
+        await readFile(input === "artifact" ? artifact : resource, "utf8"),
+      ).toContain("# edited during receipt staging");
+  }, 30000);
+}
+
+for (const input of [
+  "config",
+  "artifact",
+  "schema",
+  "resource",
+  "route",
+] as const) {
+  for (const boundary of ["stage-sync", "activation", "parent-sync"] as const) {
+    if (input === "config" && boundary === "stage-sync") continue;
+    test(`Apply observes ${input} edits at completion ${boundary}`, async () => {
+      const f = await reviewedApplyFixture();
+      const originalReceipt = await readFile(f.receipt);
+      const artifact = path.join(path.dirname(f.receipt), "proposal.md");
+      const schema = path.join(
+        f.fixture.linked,
+        "openspec/schemas/portable/schema.yaml",
+      );
+      const resource = path.join(
+        f.fixture.linked,
+        "openspec/schemas/portable/skills.txt",
+      );
+      const route = path.join(f.fixture.linked, "openspec/schemas");
+      let changed = false;
+      const mutate = async () => {
+        if (changed) return;
+        changed = true;
+        if (input === "route") await chmod(route, 0o700);
+        else
+          await fsPromises.appendFile(
+            {
+              config: f.config,
+              artifact,
+              schema,
+              resource,
+            }[input],
+            "\n# changed during completion\n",
+          );
+      };
+      const originalOpen = fsPromises.open;
+      const originalRename = fsPromises.rename;
+      const openSpy = spyOn(fsPromises, "open").mockImplementation(
+        async (...args: Parameters<typeof fsPromises.open>) => {
+          const handle = await originalOpen(...args);
+          const file = String(args[0]);
+          if (
+            boundary === "stage-sync" &&
+            file.startsWith(path.dirname(f.journal)) &&
+            file.includes(".re-pin-journal.json.")
+          ) {
+            const originalSync = handle.sync.bind(handle);
+            spyOn(handle, "sync").mockImplementation(async () => {
+              await originalSync();
+              if (!(await readFile(f.receipt)).equals(originalReceipt))
+                await mutate();
+            });
+          }
+          if (boundary === "parent-sync" && file === path.dirname(f.journal)) {
+            const originalSync = handle.sync.bind(handle);
+            spyOn(handle, "sync").mockImplementation(async () => {
+              await originalSync();
+              const state = JSON.parse(await readFile(f.journal, "utf8")).state;
+              if (state === "complete") await mutate();
+            });
+          }
+          return handle;
+        },
+      );
+      const renameSpy = spyOn(fsPromises, "rename").mockImplementation(
+        async (...args: Parameters<typeof fsPromises.rename>) => {
+          if (
+            boundary === "activation" &&
+            args[1] === f.journal &&
+            !(await readFile(f.receipt)).equals(originalReceipt)
+          )
+            await mutate();
+          return originalRename(...args);
+        },
+      );
+      let result;
+      try {
+        result = await f.apply();
+      } finally {
+        openSpy.mockRestore();
+        renameSpy.mockRestore();
+      }
+      expect(changed).toBe(true);
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error.code).toMatch(
+          /REPIN_POSTFLIGHT|REPIN_ROUTE_CHANGED/,
+        );
+      expect(JSON.parse(await readFile(f.receipt, "utf8")).rePins).toHaveLength(
+        1,
+      );
+      const journal = JSON.parse(await readFile(f.journal, "utf8"));
+      expect(["prepared", "partial", "complete"]).toContain(journal.state);
+      if (input === "route")
+        expect((await stat(route)).mode & 0o777).toBe(0o700);
+      else
+        expect(
+          await readFile(
+            { config: f.config, artifact, schema, resource }[input],
+            "utf8",
+          ),
+        ).toContain("# changed during completion");
+    }, 30000);
+  }
+}
+
+for (const version of [1, 2] as const) {
+  for (const state of ["prepared", "partial", "complete"] as const) {
+    test(`Apply handles version ${version} ${state} journal without guessing recovery`, async () => {
+      const f = await reviewedApplyFixture();
+      const originalReceipt = await readFile(f.receipt);
+      const first = await f.apply();
+      expect(first.ok).toBe(true);
+      const journal = JSON.parse(await readFile(f.journal, "utf8"));
+      expect(journal.version).toBe(2);
+      expect(journal.state).toBe("complete");
+      expect(journal.expected.bytes).toBe(originalReceipt.toString("base64"));
+      expect(Buffer.from(journal.intended, "base64")).toEqual(
+        await readFile(f.receipt),
+      );
+      journal.version = version;
+      journal.state = state;
+      await writeFile(f.journal, JSON.stringify(journal));
+      const intendedReceipt = await readFile(f.receipt);
+      const result = await f.apply();
+      expect(result.ok).toBe(false);
+      if (state === "complete") {
+        if (!result.ok) expect(result.error.code).toBe("STALE_PREVIEW");
+      } else {
+        if (!result.ok)
+          expect(result.error.code).toBe("REPIN_RECOVERY_REQUIRED");
+        const noToken = await applyChangeRePin({
+          rootInput: f.fixture.linked,
+          changeInput: "sample",
+          schemaInput: "portable",
+          selection: { profiles: [], noProfiles: false, skillHosts: [] },
+        });
+        expect(noToken.ok).toBe(false);
+        if (!noToken.ok)
+          expect(noToken.error.code).toBe("REPIN_RECOVERY_REQUIRED");
+      }
+      expect(await readFile(f.receipt)).toEqual(intendedReceipt);
+    }, 30000);
+  }
+}
+
+for (const version of [1, 2] as const) {
+  test(`public preview accepts a completed version ${version} journal`, async () => {
+    const f = await reviewedApplyFixture();
+    expect((await f.apply()).ok).toBe(true);
+    const complete = JSON.parse(await readFile(f.journal, "utf8"));
+    if (version === 1)
+      await writeFile(
+        f.journal,
+        JSON.stringify({
+          version,
+          state: "complete",
+          operationId: complete.operationId,
+        }),
+      );
+    const journalBytes = await readFile(f.journal);
+    const preview = await previewChangeRePin(
+      f.fixture.linked,
+      "sample",
+      "portable",
+      { profiles: [], noProfiles: false, skillHosts: [] },
+    );
+    expect(preview.ok).toBe(true);
+    if (preview.ok) expect(preview.data.noOp).toBe(true);
+    expect(await readFile(f.journal)).toEqual(journalBytes);
+  }, 30000);
+}
+
+test("Apply refuses a malformed version-two intent without touching the receipt", async () => {
+  const f = await reviewedApplyFixture();
+  const originalReceipt = await readFile(f.receipt);
+  expect((await f.apply()).ok).toBe(true);
+  const journal = JSON.parse(await readFile(f.journal, "utf8"));
+  journal.expected.bytes = Buffer.from("foreign receipt").toString("base64");
+  await writeFile(f.journal, JSON.stringify(journal));
+  await writeFile(f.receipt, originalReceipt);
+  const selection = { profiles: [], noProfiles: false, skillHosts: [] };
+  const review = await previewChangeRePin(
+    f.fixture.linked,
+    "sample",
+    "portable",
+    selection,
+  );
+  expect(review.ok).toBe(false);
+  if (!review.ok) expect(review.error.code).toBe("REPIN_JOURNAL_INVALID");
+  await writeFile(
+    f.journal,
+    JSON.stringify({
+      ...journal,
+      expected: {
+        ...journal.expected,
+        bytes: originalReceipt.toString("base64"),
+      },
+    }),
+  );
+  const fresh = await previewChangeRePin(
+    f.fixture.linked,
+    "sample",
+    "portable",
+    selection,
+  );
+  expect(fresh.ok).toBe(true);
+  if (!fresh.ok || !fresh.confirmation) return;
+  await writeFile(f.journal, JSON.stringify(journal));
+  const result = await applyChangeRePin({
+    rootInput: f.fixture.linked,
+    changeInput: "sample",
+    schemaInput: "portable",
+    applyToken: fresh.confirmation.token,
+    confirmationText: fresh.confirmation.exactTarget,
+    selection,
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("REPIN_JOURNAL_INVALID");
+  expect(await readFile(f.receipt)).toEqual(originalReceipt);
+}, 30000);
+
+for (const version of [1, 2] as const) {
+  for (const state of ["prepared", "partial"] as const) {
+    test(`public preview refuses version ${version} ${state} journal without writes`, async () => {
+      const f = await reviewedApplyFixture();
+      const before = await readFile(f.receipt);
+      if (version === 2) {
+        expect((await f.apply()).ok).toBe(true);
+        const complete = JSON.parse(await readFile(f.journal, "utf8"));
+        complete.state = state;
+        await writeFile(f.journal, JSON.stringify(complete));
+      } else {
+        await writeFile(
+          f.journal,
+          JSON.stringify({ version, state, operationId: "pending-review" }),
+        );
+      }
+      const receipt = await readFile(f.receipt);
+      const journalBytes = await readFile(f.journal);
+      const result = await previewChangeRePin(
+        f.fixture.linked,
+        "sample",
+        "portable",
+        { profiles: [], noProfiles: false, skillHosts: [] },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("REPIN_RECOVERY_REQUIRED");
+      expect(await readFile(f.receipt)).toEqual(receipt);
+      expect(await readFile(f.journal)).toEqual(journalBytes);
+      if (version === 1) expect(receipt).toEqual(before);
+    }, 30000);
+  }
+}
+
+test("no-token healthy Apply refuses a held project lock", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const release = await acquireProjectMutationLock(f.linked);
+  try {
+    const result = await applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      selection: { profiles: [], noProfiles: false, skillHosts: [] },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("PROJECT_LOCKED");
+  } finally {
+    await release();
+  }
+}, 30000);
+
+test("no-token Apply refuses a journal created during its no-op preview", async () => {
+  const f = await linkedFixture(roots);
+  await completeWorkflow(f.linked, f.change);
+  execFileSync("git", ["worktree", "remove", "--force", f.original], {
+    cwd: f.linked,
+  });
+  const directory = await changeDirectory(f.linked, f.change);
+  const receipt = path.join(directory, ".opsx-provenance.json");
+  const before = await readFile(receipt);
+  const journal = path.join(f.linked, "openspec/.opsx/re-pin-journal.json");
+  const originalLstat = fsPromises.lstat;
+  let missingReads = 0;
+  async function watchedLstat(
+    pathInput: PathLike,
+    options?: StatOptions & { bigint?: false },
+  ): Promise<Stats>;
+  async function watchedLstat(
+    pathInput: PathLike,
+    options: StatOptions & { bigint: true },
+  ): Promise<BigIntStats>;
+  async function watchedLstat(
+    pathInput: PathLike,
+    options?: StatOptions,
+  ): Promise<Stats | BigIntStats>;
+  async function watchedLstat(
+    pathInput: PathLike,
+    options?: StatOptions,
+  ): Promise<Stats | BigIntStats> {
+    try {
+      return await originalLstat(pathInput, options);
+    } catch (error) {
+      if (
+        String(pathInput) === journal &&
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        missingReads++;
+        if (missingReads === 2)
+          await writeFile(
+            journal,
+            JSON.stringify({
+              version: 1,
+              state: "prepared",
+              operationId: "external",
+            }),
+          );
+      }
+      throw error;
+    }
+  }
+  const lstatSpy = spyOn(fsPromises, "lstat").mockImplementation(watchedLstat);
+  let result;
+  try {
+    result = await applyChangeRePin({
+      rootInput: f.linked,
+      changeInput: f.change,
+      schemaInput: "portable",
+      selection: { profiles: [], noProfiles: false, skillHosts: [] },
+    });
+  } finally {
+    lstatSpy.mockRestore();
+  }
+  expect(missingReads).toBeGreaterThanOrEqual(2);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("REPIN_RECOVERY_REQUIRED");
+  expect(await readFile(receipt)).toEqual(before);
+  expect(JSON.parse(await readFile(journal, "utf8")).state).toBe("prepared");
+}, 30000);
+
+for (const edit of [
+  "bytes",
+  "mode",
+  "replacement",
+  "receipt",
+  "route",
+] as const) {
+  test(`Apply refuses ${edit} changed during receipt callback before activation`, async () => {
+    const f = await reviewedApplyFixture();
+    const originalReceipt = await readFile(f.receipt);
+    const originalReceiptMode = (await stat(f.receipt)).mode & 0o777;
+    const originalOpen = fsPromises.open;
+    const originalLstat = fsPromises.lstat;
+    let stage = "";
+    let stageIno = 0;
+    let injected = false;
+    const openSpy = spyOn(fsPromises, "open").mockImplementation(
+      async (...args: Parameters<typeof fsPromises.open>) => {
+        const handle = await originalOpen(...args);
+        const file = String(args[0]);
+        if (file.includes(".opsx-provenance.json.") && file.endsWith(".tmp")) {
+          stage = file;
+          stageIno = (await handle.stat()).ino;
+        }
+        return handle;
+      },
+    );
+    async function watchedLstat(
+      pathInput: PathLike,
+      options?: StatOptions & { bigint?: false },
+    ): Promise<Stats>;
+    async function watchedLstat(
+      pathInput: PathLike,
+      options: StatOptions & { bigint: true },
+    ): Promise<BigIntStats>;
+    async function watchedLstat(
+      pathInput: PathLike,
+      options?: StatOptions,
+    ): Promise<Stats | BigIntStats>;
+    async function watchedLstat(
+      pathInput: PathLike,
+      options?: StatOptions,
+    ): Promise<Stats | BigIntStats> {
+      const result = await originalLstat(pathInput, options);
+      if (!injected && stage && String(pathInput) === f.journal) {
+        injected = true;
+        if (edit === "bytes") await fsPromises.appendFile(stage, "foreign\n");
+        if (edit === "mode") await chmod(stage, 0o400);
+        if (edit === "replacement") {
+          const replacement = `${stage}.foreign`;
+          await writeFile(replacement, await readFile(stage));
+          await chmod(replacement, (await stat(stage)).mode & 0o777);
+          await rename(replacement, stage);
+        }
+        if (edit === "receipt")
+          await fsPromises.appendFile(f.receipt, "foreign\n");
+        if (edit === "route")
+          await chmod(path.join(f.fixture.linked, "openspec/schemas"), 0o700);
+      }
+      return result;
+    }
+    const lstatSpy = spyOn(fsPromises, "lstat").mockImplementation(
+      watchedLstat,
+    );
+    let result;
+    try {
+      result = await f.apply();
+    } finally {
+      openSpy.mockRestore();
+      lstatSpy.mockRestore();
+    }
+    expect(injected).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.code).toBe(
+        edit === "receipt"
+          ? "REPIN_STALE"
+          : edit === "route"
+            ? "REPIN_ROUTE_CHANGED"
+            : "REPIN_STAGE_CHANGED",
+      );
+    if (edit === "receipt")
+      expect(await readFile(f.receipt, "utf8")).toContain("foreign");
+    else expect(await readFile(f.receipt)).toEqual(originalReceipt);
+    if (edit !== "receipt")
+      expect((await stat(f.receipt)).mode & 0o777).toBe(originalReceiptMode);
+    if (edit === "bytes")
+      expect(await readFile(stage, "utf8")).toContain("foreign");
+    if (edit === "mode") expect((await stat(stage)).mode & 0o777).toBe(0o400);
+    if (edit === "replacement") {
+      expect((await stat(stage)).ino).not.toBe(stageIno);
+      const partial = JSON.parse(await readFile(f.journal, "utf8"));
+      expect(await readFile(stage)).toEqual(
+        Buffer.from(partial.intended, "base64"),
+      );
+    }
+    if (edit === "bytes" || edit === "mode" || edit === "replacement")
+      expect(JSON.parse(await readFile(f.journal, "utf8")).state).toBe(
+        "partial",
+      );
+  }, 30000);
+}
+
+for (const edit of ["bytes", "mode"] as const) {
+  test(`cleanup retains an owned stage changed in place by ${edit}`, async () => {
+    const f = await reviewedApplyFixture();
+    const originalReceipt = await readFile(f.receipt);
+    const originalOpen = fsPromises.open;
+    const originalLstat = fsPromises.lstat;
+    let changedConfig = false;
+    let changedStage = false;
+    let changedStageMode = 0;
+    let stageCalls = 0;
+    let stagePath = "";
+    const openSpy = spyOn(fsPromises, "open").mockImplementation(
+      async (...args: Parameters<typeof fsPromises.open>) => {
+        const handle = await originalOpen(...args);
+        const file = String(args[0]);
+        if (file.includes(".opsx-provenance.json.") && file.endsWith(".tmp")) {
+          stagePath = file;
+          const originalSync = handle.sync.bind(handle);
+          spyOn(handle, "sync").mockImplementation(async () => {
+            await originalSync();
+            if (!changedConfig) {
+              await fsPromises.appendFile(f.config, "# external config edit\n");
+              changedConfig = true;
+            }
+          });
+        }
+        return handle;
+      },
+    );
+    async function watchedLstat(
+      pathInput: PathLike,
+      options?: StatOptions & { bigint?: false },
+    ): Promise<Stats>;
+    async function watchedLstat(
+      pathInput: PathLike,
+      options: StatOptions & { bigint: true },
+    ): Promise<BigIntStats>;
+    async function watchedLstat(
+      pathInput: PathLike,
+      options?: StatOptions,
+    ): Promise<Stats | BigIntStats>;
+    async function watchedLstat(
+      pathInput: PathLike,
+      options?: StatOptions,
+    ): Promise<Stats | BigIntStats> {
+      if (String(pathInput) === stagePath) {
+        stageCalls++;
+        if (stageCalls === 7) {
+          if (edit === "bytes")
+            await fsPromises.appendFile(stagePath, "foreign\n");
+          else {
+            const mode = (await stat(stagePath)).mode & 0o777;
+            changedStageMode = mode ^ 0o100;
+            await chmod(stagePath, changedStageMode);
+          }
+          changedStage = true;
+        }
+      }
+      return originalLstat(pathInput, options);
+    }
+    const lstatSpy = spyOn(fsPromises, "lstat").mockImplementation(
+      watchedLstat,
+    );
+    let result;
+    try {
+      result = await f.apply();
+    } finally {
+      openSpy.mockRestore();
+      lstatSpy.mockRestore();
+    }
+    expect(changedConfig).toBe(true);
+    expect(changedStage).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(await readFile(f.receipt)).toEqual(originalReceipt);
+    expect(await stat(stagePath)).toBeDefined();
+    if (edit === "bytes")
+      expect(await readFile(stagePath, "utf8")).toContain("foreign");
+    else expect((await stat(stagePath)).mode & 0o777).toBe(changedStageMode);
+  }, 30000);
+}
