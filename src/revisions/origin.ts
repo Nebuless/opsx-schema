@@ -54,20 +54,26 @@ export function validOrigin(
   );
 }
 
+export function projectSchemaSourceRoot(
+  source: string,
+  name: string,
+): string | undefined {
+  if (!path.isAbsolute(source) || path.normalize(source) !== source)
+    return undefined;
+  const root = path.resolve(source, "../../..");
+  return path.join(root, "openspec", "schemas", name) === source
+    ? root
+    : undefined;
+}
+
 export function originMatchesSource(
   source: string,
   value: unknown,
   name: string,
 ): boolean {
-  if (
-    !validOrigin(value, name) ||
-    !path.isAbsolute(source) ||
-    path.normalize(source) !== source
-  )
-    return false;
-  const projectRoot = path.resolve(source, "../../../");
   return (
-    path.join(projectRoot, ...value.relativeSchemaPath.split("/")) === source
+    validOrigin(value, name) &&
+    projectSchemaSourceRoot(source, name) !== undefined
   );
 }
 

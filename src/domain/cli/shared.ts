@@ -8,7 +8,7 @@ export type GlobalOptions = {
   project?: string;
   words: string[];
 };
-type FlagDefinition = "one" | "repeat";
+type FlagDefinition = "one" | "repeat" | "boolean";
 type ParsedFlags = {
   positionals: string[];
   values: Record<string, string | string[]>;
@@ -52,6 +52,12 @@ export function flags(
     }
     const definition = definitions[arg];
     if (!definition) throw new OpsxError("USAGE", `Unknown flag: ${arg}`);
+    if (definition === "boolean") {
+      if (parsed.values[arg] !== undefined)
+        throw new OpsxError("USAGE", `${arg} may be supplied only once.`);
+      parsed.values[arg] = "true";
+      continue;
+    }
     const value = args[i + 1];
     if (!value || value.startsWith("--"))
       throw new OpsxError("USAGE", `${arg} needs a value.`);

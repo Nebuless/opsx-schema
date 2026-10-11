@@ -33,6 +33,11 @@ Schema selection SHALL show the effective named revision, resolved source and co
 - **WHEN** revision health is checked from a different path
 - **THEN** the pin remains unhealthy, diagnostics require explicit re-pin, and no witness is backfilled by the read.
 
+#### Scenario: Vanished legacy source remains unauthenticated
+- **GIVEN** an absolute-only old source that no longer exists, even if its path has exact project-schema shape
+- **WHEN** ordinary revision health or validation runs
+- **THEN** the old origin remains unverified and unhealthy; matching current content does not automatically establish historical project ownership.
+
 ## ADDED Requirements
 
 ### Requirement: Exact effective re-pin history
@@ -72,12 +77,22 @@ Version-2 provenance MUST distinguish no reviewed skill association from one est
 - **THEN** existing history remains readable, but extension refuses rather than inferring a predecessor or changing old bytes.
 
 ### Requirement: Guarded same-name re-pin and recovery
-An explicit re-pin MUST target one existing change and its already pinned schema name, with unchanged content digest, intact retained snapshot, a tracked unshadowed project-local target and valid resource ownership. Preview MUST be read-only and identify any required explicit compatible skill selection. It MUST run strict workflow validation against retained/target-equivalent bytes; only the explicitly reviewed historical-origin mismatch MAY be allowed for this re-pin operation. Every other validation, ownership, content, retention, genuine-shadow and bundle check remains mandatory, and ordinary validation MUST NOT be relaxed. Apply MUST require a fresh matching token, shared project lock, rechecked live inputs and a durable journal before one guarded provenance replacement. Pin, project default, retained content, artifacts, installed resources and earlier receipts MUST remain byte-identical. Recovery inspection MUST be read-only; separately confirmed recovery MUST distinguish absent, exact-present and conflicting intent, refuse conflicts, and preserve partial evidence without guessing a rollback.
+An explicit re-pin MUST target one existing change and its already pinned schema name, with unchanged content digest and bundle, intact retained snapshot, a tracked unshadowed witnessed project-local **current** target and valid resource ownership. A missing absolute-only legacy source MAY enter this manual operation only if its normalized old path has exact `openspec/schemas/<name>` shape and all existing path components are safe. Path shape is eligibility, not proof of old ownership; a completely vanished external path of that shape is indistinguishable from a removed checkout and MUST be disclosed as unverified. Existing dangling, redirected or non-directory components, reachable known non-project sources and other old path kinds MUST NOT use this exception. Preview MUST be read-only, identify any required explicit compatible skill selection, and show the old-location warning with an explicit confirmation request. It MUST run strict completed workflow validation against retained/target-equivalent bytes; only the explicitly reviewed historical-origin mismatch MAY be allowed for this re-pin operation. Every other validation, ownership, content, retention, genuine-shadow and bundle check remains mandatory, and ordinary validation MUST NOT be relaxed. Apply MUST require a fresh matching token bound to the warning and confirmation, shared project lock, rechecked live inputs and a durable journal before one guarded provenance replacement. The new event records the verified current reference without inventing an old witness or source kind. Pin, project default, retained content, artifacts, installed resources and earlier receipts MUST remain byte-identical. Recovery inspection MUST be read-only; separately confirmed recovery MUST bind a new token and confirmation to the same warning and exact journal intent, distinguish absent, exact-present and conflicting intent, refuse conflicts, and preserve partial evidence without guessing a rollback.
 
 #### Scenario: Reviewed associated re-pin
 - **GIVEN** an ambiguous origin with unchanged content and retention, and an explicitly reviewed compatible association whose installed targets remain owned and intact
 - **WHEN** the exact re-pin preview is confirmed with a fresh token
 - **THEN** one new effective origin and association disposition are recorded together without installing, removing or changing skills.
+
+#### Scenario: Vanished eligible legacy source
+- **GIVEN** an old absolute-only source that has vanished, a safe normalized `openspec/schemas/<name>` old path, intact retention and matching digest and bundle, and a separately verified witnessed tracked current target
+- **WHEN** the exact preview warns that the old location cannot be verified and the operator confirms use of the current location with a fresh token after strict completed validation
+- **THEN** one new re-pin event is appended, old history remains unchanged, and no old ownership or witness is asserted.
+
+#### Scenario: Known or unsafe old source
+- **GIVEN** an existing dangling, redirected or non-directory old path component, a reachable known non-project source, or an old path outside the exact project-schema shape
+- **WHEN** missing-source re-pin is previewed
+- **THEN** it refuses without mutation even if the current schema's content matches.
 
 #### Scenario: Unsafe target or stale token
 - **GIVEN** changed content, missing retention, inherited or different schema pin, a genuine target shadow, untracked target, unsafe ownership, incomplete workflow, changed input or stale token

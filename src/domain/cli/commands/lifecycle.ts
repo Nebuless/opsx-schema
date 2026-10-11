@@ -7,6 +7,7 @@ import {
 } from "../../../cli/read.ts";
 import { archiveChange } from "../../../cli/archive.ts";
 import { handoffChangeSchema } from "../../../cli/handoff.ts";
+import { previewChangeRePin } from "../../../cli/repin.ts";
 import { flags, many, one, requireCount, skillBundle } from "../shared.ts";
 import { isSkillInstallHostId } from "../../../resources/index.ts";
 import type { SkillInstallHostId } from "../../../resources/index.ts";
@@ -24,7 +25,7 @@ export async function commandChange(
   if (!operation)
     throw new OpsxError(
       "USAGE",
-      "Usage: change <create|status|instructions|validate|archive|schema> ...",
+      "Usage: change <create|status|instructions|validate|archive|schema|re-pin> ...",
     );
   if (operation === "create") {
     const parsed = flags(rest, {
@@ -84,6 +85,52 @@ export async function commandChange(
           : {}),
       },
       apply ? { applyToken: apply } : {},
+    );
+  }
+  if (operation === "re-pin") {
+    const parsed = flags(rest, {
+      "--bundle": "one",
+      "--profile": "repeat",
+      "--skill-host": "repeat",
+      "--no-profiles": "boolean",
+      "--apply-token": "one",
+      "--recover": "boolean",
+    });
+    requireCount(
+      parsed.positionals,
+      2,
+      2,
+      "change re-pin <change> <schema> [selection flags]",
+    );
+    const hosts = many(parsed, "--skill-host");
+    if (hosts.some((host) => !isSkillInstallHostId(host)))
+      throw new OpsxError(
+        "USAGE",
+        "--skill-host must be opencode, omp, pi, atomic, or senpi.",
+      );
+    const noProfiles = one(parsed, "--no-profiles") !== undefined;
+    if (one(parsed, "--apply-token") && one(parsed, "--recover"))
+      throw new OpsxError(
+        "USAGE",
+        "--apply-token and --recover cannot be combined.",
+      );
+    return previewChangeRePin(
+      root,
+      parsed.positionals[0]!,
+      parsed.positionals[1]!,
+      {
+        profiles: many(parsed, "--profile"),
+        noProfiles,
+        skillHosts: hosts as SkillInstallHostId[],
+        ...(one(parsed, "--bundle")
+          ? { bundle: skillBundle(one(parsed, "--bundle")) }
+          : {}),
+      },
+      one(parsed, "--apply-token")
+        ? "apply"
+        : one(parsed, "--recover")
+          ? "recover"
+          : undefined,
     );
   }
   if (

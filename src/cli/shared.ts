@@ -26,7 +26,8 @@ export type LifecycleAction =
   | "change.instructions"
   | "change.validate"
   | "change.archive"
-  | "change.schema-handoff";
+  | "change.schema-handoff"
+  | "change.re-pin";
 export interface ActionTarget {
   root: string;
   change?: string;

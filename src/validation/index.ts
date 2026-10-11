@@ -24,6 +24,7 @@ import {
 import {
   checkRevision,
   inspectRetainedRevision,
+  revisionRefIdentity,
   resolveRevision,
 } from "../revisions/index.ts";
 import type {
@@ -44,6 +45,7 @@ export interface ValidationResult {
   change: string;
   schema: string;
   findings: ValidationFinding[];
+  strictWorkflowValidated?: boolean;
 }
 
 interface Context {
@@ -176,7 +178,7 @@ function readValidationResult(
   change: string,
   result: OpenSpecCommandResult,
   context: Context,
-): void {
+): boolean {
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.stdout);
@@ -191,7 +193,7 @@ function readValidationResult(
       message: `Could not interpret OpenSpec 1.12.0 validation output: ${detail}`,
       path: projectPath(change),
     });
-    return;
+    return false;
   }
 
   const payload = asRecord(parsed);
@@ -209,7 +211,7 @@ function readValidationResult(
         "OpenSpec returned JSON without a recognizable change-validation result.",
       path: projectPath(change),
     });
-    return;
+    return false;
   }
 
   const issues = Array.isArray(item.issues)
@@ -264,6 +266,16 @@ function readValidationResult(
       path: projectPath(change),
     });
   }
+  return (
+    item.id === change &&
+    item.valid === true &&
+    result.status === 0 &&
+    !issues.some((issue) => {
+      const level =
+        typeof issue.level === "string" ? issue.level.toUpperCase() : "ERROR";
+      return level !== "WARNING" && level !== "WARN";
+    })
+  );
 }
 
 async function copyTree(
@@ -451,6 +463,7 @@ async function prepareContext(root: string, change: string): Promise<Context> {
 async function checkPinnedRevision(
   context: Context,
   change: string,
+  reviewedHistoricalOrigin?: { recorded: RevisionRef; target: RevisionRef },
 ): Promise<RevisionCheck | undefined> {
   if (!context.revision) return undefined;
   try {
@@ -458,6 +471,7 @@ async function checkPinnedRevision(
       context.root,
       context.revision,
       context.client,
+      { reviewedHistoricalOrigin: reviewedHistoricalOrigin !== undefined },
     );
     if (!checked.retained) {
       add(context, {
@@ -482,12 +496,33 @@ async function checkPinnedRevision(
         path: projectPath(change, ".openspec.yaml"),
       });
     } else if (checked.state === "shadow") {
-      add(context, {
-        code: "SCHEMA_REVISION_SHADOW",
-        severity: "error",
-        message: `The ${context.revision.name} schema now resolves from a different source than the pinned revision.`,
-        path: projectPath(change, ".openspec.yaml"),
-      });
+      const liveTarget =
+        checked.historicalOriginMismatchOnly && reviewedHistoricalOrigin
+          ? await resolveRevision(context.client, context.revision.name)
+          : undefined;
+      const reviewed =
+        checked.historicalOriginMismatchOnly === true &&
+        liveTarget?.origin !== undefined &&
+        liveTarget.shadows.length === 0 &&
+        reviewedHistoricalOrigin !== undefined &&
+        revisionRefIdentity(context.revision) ===
+          revisionRefIdentity(reviewedHistoricalOrigin.recorded) &&
+        revisionRefIdentity(liveTarget) ===
+          revisionRefIdentity(reviewedHistoricalOrigin.target);
+      add(
+        context,
+        {
+          code: reviewed
+            ? "SCHEMA_HISTORICAL_ORIGIN_REVIEWED"
+            : "SCHEMA_REVISION_SHADOW",
+          severity: reviewed ? "warning" : "error",
+          message: reviewed
+            ? `The historical ${context.revision.name} origin differs from the reviewed re-pin target.`
+            : `The ${context.revision.name} schema now resolves from a different source than the pinned revision.`,
+          path: projectPath(change, ".openspec.yaml"),
+        },
+        !reviewed,
+      );
     }
     reportShadows(context, change, checked.revision);
     return checked;
@@ -507,7 +542,7 @@ function readStatus(
   schemaName: string,
   status: unknown,
   context: Context,
-): void {
+): boolean {
   const value = asRecord(status);
   if (
     !value ||
@@ -522,7 +557,7 @@ function readStatus(
       message: "OpenSpec status returned an unrecognized workflow result.",
       path: projectPath(change),
     });
-    return;
+    return false;
   }
   if (value.schemaName !== schemaName) {
     add(context, {
@@ -531,7 +566,7 @@ function readStatus(
       message: `OpenSpec selected ${value.schemaName} in the isolated validation project instead of ${schemaName}.`,
       path: projectPath(change, ".openspec.yaml"),
     });
-    return;
+    return false;
   }
   if (value.isPlanningComplete !== true) {
     const incomplete = value.artifacts
@@ -569,12 +604,14 @@ function readStatus(
       path: projectPath(change, pathValue),
     });
   }
+  return value.isPlanningComplete === true;
 }
 
 async function runGate(
   context: Context,
   targetSchema?: string,
   targetSchemaRoot?: string,
+  reviewedHistoricalOrigin?: { recorded: RevisionRef; target: RevisionRef },
 ): Promise<ValidationResult> {
   const change = context.change;
   const schemaName = targetSchema ?? context.schema;
@@ -616,7 +653,7 @@ async function runGate(
       }
     } else {
       const checked = context.revision
-        ? await checkPinnedRevision(context, change)
+        ? await checkPinnedRevision(context, change, reviewedHistoricalOrigin)
         : undefined;
       if (context.revision && (!checked || !checked.retained)) {
         return {
@@ -659,6 +696,8 @@ async function runGate(
   }
 
   let temporaryRoot: string | undefined;
+  let workflowStatusComplete = false;
+  let strictValidationComplete = false;
   try {
     temporaryRoot = await buildFixture(context, change, schemaName, source);
     const isolatedClient = new OpenSpecClient(temporaryRoot);
@@ -673,7 +712,8 @@ async function runGate(
         path: projectPath(change),
       });
     }
-    if (status !== undefined) readStatus(change, schemaName, status, context);
+    if (status !== undefined)
+      workflowStatusComplete = readStatus(change, schemaName, status, context);
 
     const result = await new OpenSpecClient(temporaryRoot).commandResult(
       "validate",
@@ -684,7 +724,7 @@ async function runGate(
       "--json",
       "--no-interactive",
     );
-    readValidationResult(change, result, context);
+    strictValidationComplete = readValidationResult(change, result, context);
   } catch (error) {
     add(context, {
       code: "VALIDATION_UNKNOWN",
@@ -702,6 +742,12 @@ async function runGate(
     change,
     schema: schemaName,
     findings: context.findings,
+    ...(reviewedHistoricalOrigin
+      ? {
+          strictWorkflowValidated:
+            workflowStatusComplete && strictValidationComplete,
+        }
+      : {}),
   };
 }
 
@@ -715,6 +761,7 @@ export async function validateChange(
 
 export interface ValidateChangeAgainstOptions {
   targetSchemaRoot?: string;
+  reviewedHistoricalOrigin?: { recorded: RevisionRef; target: RevisionRef };
 }
 
 /** Preflight a change against a destination schema in an isolated OpenSpec project. */
@@ -728,5 +775,6 @@ export async function validateChangeAgainst(
     await prepareContext(root, name),
     targetSchema,
     options.targetSchemaRoot,
+    options.reviewedHistoricalOrigin,
   );
 }
