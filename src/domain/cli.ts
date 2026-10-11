@@ -41,8 +41,8 @@ Change lifecycle (mutations preview by default):
   change validate <change>
   change archive <change> [--apply-token <token>]
   change schema <change> <schema> [--apply-token <token>]
-  change re-pin <change> <schema> [--bundle default|recommended|all] [--profile <id> ... | --no-profiles] [--skill-host <host> ...]
-    Read-only preview; --apply-token and --recover are refused until those operations are implemented.
+  change re-pin <change> <schema> [--bundle default|recommended|all] [--profile <id> ... | --no-profiles] [--skill-host <host> ...] [--apply-token <token> --confirm <exact preview text>]
+    Preview is read-only. Apply requires the fresh token and exact confirmation text; --recover is not implemented.
 
 Schemas and profiles:
   schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--migrate <change> ...] [--apply-token <token>]

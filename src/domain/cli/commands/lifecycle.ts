@@ -7,7 +7,7 @@ import {
 } from "../../../cli/read.ts";
 import { archiveChange } from "../../../cli/archive.ts";
 import { handoffChangeSchema } from "../../../cli/handoff.ts";
-import { previewChangeRePin } from "../../../cli/repin.ts";
+import { applyChangeRePin, previewChangeRePin } from "../../../cli/repin.ts";
 import { flags, many, one, requireCount, skillBundle } from "../shared.ts";
 import { isSkillInstallHostId } from "../../../resources/index.ts";
 import type { SkillInstallHostId } from "../../../resources/index.ts";
@@ -94,6 +94,7 @@ export async function commandChange(
       "--skill-host": "repeat",
       "--no-profiles": "boolean",
       "--apply-token": "one",
+      "--confirm": "one",
       "--recover": "boolean",
     });
     requireCount(
@@ -114,23 +115,35 @@ export async function commandChange(
         "USAGE",
         "--apply-token and --recover cannot be combined.",
       );
+    const selection = {
+      profiles: many(parsed, "--profile"),
+      noProfiles,
+      skillHosts: hosts as SkillInstallHostId[],
+      ...(one(parsed, "--bundle")
+        ? { bundle: skillBundle(one(parsed, "--bundle")) }
+        : {}),
+    };
+    const applyToken = one(parsed, "--apply-token");
+    if (applyToken)
+      return applyChangeRePin({
+        rootInput: root,
+        changeInput: parsed.positionals[0]!,
+        schemaInput: parsed.positionals[1]!,
+        applyToken,
+        confirmationText: one(parsed, "--confirm"),
+        selection,
+      });
+    if (one(parsed, "--confirm"))
+      throw new OpsxError(
+        "USAGE",
+        "--confirm is only valid with --apply-token.",
+      );
     return previewChangeRePin(
       root,
       parsed.positionals[0]!,
       parsed.positionals[1]!,
-      {
-        profiles: many(parsed, "--profile"),
-        noProfiles,
-        skillHosts: hosts as SkillInstallHostId[],
-        ...(one(parsed, "--bundle")
-          ? { bundle: skillBundle(one(parsed, "--bundle")) }
-          : {}),
-      },
-      one(parsed, "--apply-token")
-        ? "apply"
-        : one(parsed, "--recover")
-          ? "recover"
-          : undefined,
+      selection,
+      one(parsed, "--recover") ? "recover" : undefined,
     );
   }
   if (
