@@ -258,7 +258,7 @@ async function buildHandoffPlan(
       `Schema ${destination} has same-name shadows; resolve the schema source before handoff.`,
     );
   if (from.name === toRevision.name) {
-    if (from.digest !== toRevision.digest || from.source !== toRevision.source)
+    if (from.digest !== toRevision.digest)
       throw new OpsxError(
         "SCHEMA_SAME_NAME_DRIFT",
         `Cannot hand off ${change} between different revisions with the same schema name ${destination}.`,

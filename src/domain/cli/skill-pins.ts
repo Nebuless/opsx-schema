@@ -3,11 +3,11 @@ import path from "node:path";
 import { changeDirectory } from "../../archive/index.ts";
 import {
   changeHistory,
+  effectiveRevision,
   readProvenance,
-  revisionRef,
+  sameRevisionRef,
 } from "../../provenance/index.ts";
 import { checkRevision, resolveRevision } from "../../revisions/index.ts";
-import type { RevisionRef } from "../../revisions/index.ts";
 import { OpsxError } from "../project.ts";
 import { OpenSpecClient } from "../../openspec/client.ts";
 import {
@@ -18,28 +18,6 @@ import type {
   ActiveSkillPin,
   ResourceRuntimeOptions,
 } from "../../resources/index.ts";
-
-export function samePinnedRevision(
-  left: RevisionRef,
-  right: RevisionRef,
-): boolean {
-  const a = left.bundleSource;
-  const b = right.bundleSource;
-  return (
-    left.name === right.name &&
-    left.source === right.source &&
-    left.digest === right.digest &&
-    ((!a && !b) ||
-      Boolean(
-        a &&
-          b &&
-          a.name === b.name &&
-          a.version === b.version &&
-          a.revision === b.revision &&
-          a.digest === b.digest,
-      ))
-  );
-}
 
 async function verifiedActiveSkillPins(
   root: string,
@@ -72,10 +50,7 @@ async function verifiedActiveSkillPins(
       await changeDirectory(root, entry.name),
     );
     const association = provenance?.association;
-    const latest =
-      provenance?.migrations.at(-1)?.to ??
-      provenance?.retained ??
-      provenance?.created;
+    const latest = provenance ? effectiveRevision(provenance) : null;
     if (!association) {
       const revision = await resolveRevision(client, history.currentSchema);
       if (
@@ -83,7 +58,6 @@ async function verifiedActiveSkillPins(
         revision.shadows.length > 0 ||
         (latest &&
           (history.currentSchema !== latest.name ||
-            !samePinnedRevision(latest, revisionRef(revision)) ||
             (await checkRevision(root, latest, client)).state !== "intact"))
       ) {
         throw new OpsxError(
@@ -112,7 +86,7 @@ async function verifiedActiveSkillPins(
       !latest ||
       history.divergence ||
       history.currentSchema !== association.effectiveRevision.name ||
-      !samePinnedRevision(latest, association.effectiveRevision)
+      !sameRevisionRef(latest, association.effectiveRevision)
     ) {
       throw new OpsxError(
         "RESOURCE_PIN_REVISION_CHANGED",
@@ -122,7 +96,8 @@ async function verifiedActiveSkillPins(
       );
     }
     const revision = association.effectiveRevision;
-    if ((await checkRevision(root, revision, client)).state !== "intact") {
+    const checked = await checkRevision(root, revision, client);
+    if (checked.state !== "intact" || !checked.revision) {
       throw new OpsxError(
         "RESOURCE_PIN_REVISION_CHANGED",
         "Active change " +
@@ -130,7 +105,7 @@ async function verifiedActiveSkillPins(
           " no longer resolves to its retained schema revision.",
       );
     }
-    const bundles = await loadSkillBundles(revision.source);
+    const bundles = await loadSkillBundles(checked.revision.source);
     if (
       association.manifestDigests.agentProfiles !==
         (await loadAgentProfileDigest()) ||
@@ -150,7 +125,7 @@ async function verifiedActiveSkillPins(
       change: entry.name,
       schema: revision.name,
       revisionDigest: revision.digest,
-      schemaRoot: revision.source,
+      schemaRoot: checked.revision.source,
       profiles: association.profiles,
       skillHosts: association.skillHosts,
       skillBundle: association.skillBundle,

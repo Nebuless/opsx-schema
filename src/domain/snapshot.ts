@@ -6,7 +6,7 @@ import { OpenSpecClient } from "../openspec/client.ts";
 import { schemas } from "../catalog/schemas.ts";
 import type { SchemaEntry } from "../catalog/schemas.ts";
 import { defaultSchema, OpsxError } from "./project.ts";
-import { changeHistory } from "../provenance/index.ts";
+import { readChangeHistory } from "../provenance/index.ts";
 import type { ChangeHistory } from "../provenance/index.ts";
 import {
   checkRevision,
@@ -242,11 +242,10 @@ async function detailedChangeFromSummary(
   change: ChangeSummary,
   revisionReads: RequestRevisionReads,
 ): Promise<DetailedChange> {
-  const history = await changeHistory(root, change.name);
-  const known =
-    history.migrations.at(-1)?.to ??
-    history.retained ??
-    (history.created === "Unknown" ? null : history.created);
+  const { history, effectiveRevision: known } = await readChangeHistory(
+    root,
+    change.name,
+  );
   let revision: DetailedChange["revision"] = null;
   if (known) {
     const check = await revisionReads.check(known);

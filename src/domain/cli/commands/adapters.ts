@@ -1,6 +1,7 @@
 import { OpsxError, defaultSchema } from "../../project.ts";
 import { OpenSpecClient } from "../../../openspec/client.ts";
 import { resolveRevision } from "../../../revisions/index.ts";
+import { revisionRef, sameRevisionRef } from "../../../provenance/index.ts";
 import {
   inspectCompoundAdapters,
   installCompoundAdapters,
@@ -108,9 +109,7 @@ export async function commandAdapters(
     );
     if (
       currentRevision.shadows.length ||
-      currentRevision.source !== revision.source ||
-      currentRevision.digest !== revision.digest ||
-      currentRevision.bundleSource?.digest !== bundleSource.digest
+      !sameRevisionRef(revisionRef(currentRevision), revision)
     )
       throw new OpsxError(
         "APPLY_TOKEN_STALE",
