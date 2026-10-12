@@ -38,6 +38,24 @@ bunx opsx-schema change archive account-export --apply-token <token-from-archive
 
 Use `change status` to see which artifact is ready, then `change instructions <change> <artifact>` for that artifact's content and output path. Write the artifacts in your project before validation. `change validate` and `change archive` use OpenSpec's lifecycle; archive only after the change is complete. `change schema <change> <schema>` previews a change-local schema handoff; `schema switch` changes the project default instead. Changes with verified skill selections need the guarded `schema switch ... --migrate <change>` path. See the [command reference](./commands.md#openspec-lifecycle) for those distinctions.
 
+### Recover a same-name pin in a moved project
+
+If an active change's saved absolute schema source has disappeared, review an explicit same-name re-pin. The preview must show the exact tracked schema under this project and, for an eligible legacy path whose origin cannot be verified, the warning `The old location cannot be verified. The current schema matches the saved schema content. Confirm that this change should use the current location.` This confirms the current location; it does not prove where the earlier pin came from. Keep unknown creation history unknown.
+
+```sh
+# Preview the same active change and schema name. Review data.data.ready, target, and warning.
+bunx opsx-schema --project . --json change re-pin <change> <same-schema-name>
+# Apply with the preview's token and the complete exactTarget confirmation text.
+bunx opsx-schema --project . --json change re-pin <change> <same-schema-name> --apply-token <preview-token> --confirm <exact-confirmation-text>
+
+# After an interrupted Apply, inspect without writing and review its exact intent.
+bunx opsx-schema --project . --json change re-pin <change> <same-schema-name> --recover
+# Recovery uses a new token and exact confirmation from that inspection.
+bunx opsx-schema --project . --json change re-pin <change> <same-schema-name> --recover --recovery-token <fresh-recovery-token> --confirm <exact-recovery-confirmation>
+```
+
+For an associated change, repeat the full compatible bundle, profile, and native-host selection from its recorded association; specify `--no-profiles` when that association has no profiles. Re-pin appends one history event and leaves the default schema, pin, artifacts, retained revision, installed managed resources, and older history unchanged. Recovery replays only the journal's persisted intent. Pending version-1 journals are readable only as preserved evidence and fail closed before a recovery state or token is returned; completed version-1 journals remain readable. The shared project lock serializes cooperating Opsx mutations, while unrelated external edits may still change inputs between checks and cause refusal or require manual recovery. Journaled recovery is not an atomic multi-file transaction. See [same-name re-pin and recovery](./commands.md#explicit-same-name-schema-re-pin-and-recovery) for the eligibility checks and refusal behavior.
+
 ## Other CLI workflows
 
 Use these command forms after `bunx opsx-schema`. Reads do not change your project; mutations preview and require a matching `--apply-token <token>` for Apply. Global `--json` goes **before** the command for machine-readable results. `--project <root>` goes before the command too. See the [full grammar and approval rules](./commands.md#command-reference).

@@ -5,6 +5,10 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+### Fixed
+
+- Document reviewed same-name schema re-pin and separate crash-recovery confirmation, and exercise them through the extracted package CLI while preserving managed resources and prior history.
+
 ## [0.3.0] - 2026-10-03
 
 ### Changed

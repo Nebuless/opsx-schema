@@ -223,6 +223,36 @@ This is the separate command-adapter capability, not skill installation. It prev
 
 The bundled files are `opsx-ce-bulk-continue.md`, `opsx-ce-compound.md`, `opsx-ce-continue.md`, `opsx-ce-debug.md`, `opsx-ce-define.md`, `opsx-ce-plan.md`, `opsx-ce-review.md`, `opsx-ce-validate.md` and `opsx-ce-work.md`. `adapters inspect` is read-only; install is preview/apply guarded and refuses drift or collisions rather than overwriting unowned files.
 
+### Explicit same-name schema re-pin and recovery
+
+Use `change re-pin` only for the exact active change and its existing schema name when the saved source no longer proves the same origin as the current project. A separate clone is not automatically treated as the same origin. The current target must be independently verified as the exact Git-tracked `openspec/schemas/<name>` directory in this project, with a valid linked-worktree witness, unchanged schema and bundled-resource digests, intact retained revision, no shadow or ownership conflict, and a successful completed-workflow validation. The operation does not change the project default, pin file, artifacts, retained revision, installed resources, or earlier history; it appends one re-pin event.
+
+An absolute-only legacy source can be explicitly reviewed when its old location is still independently verified as a Git-tracked project schema but belongs to a different Git common directory. That case does not use the unknown-origin exception. If the old source has disappeared, its normalized shape must be exactly `openspec/schemas/<same-name>` beneath the vanished project root. Existing path components must be real directories; dangling, redirected, symlinked, and non-directory components, reachable known non-project sources, and other old path kinds are refused. For this vanished-source case, the preview reports the old origin as unknown and identifies both locations. The saved-content match proves the current schema bytes match the retained digest; it does not authenticate the vanished source or its historical Git origin. It must show this warning:
+
+> The old location cannot be verified. The current schema matches the saved schema content. Confirm that this change should use the current location.
+
+The warning does not authenticate the old location. Review the exact current target and copy the complete confirmation text and fresh token from the preview. Apply uses both on the same command:
+
+```sh
+opsx-schema --project <root> --json change re-pin <change> <same-schema-name> [--bundle default|recommended|all] [--profile <agent-id> ... | --no-profiles] [--skill-host opencode|omp|pi|atomic|senpi ...]
+opsx-schema --project <root> --json change re-pin <change> <same-schema-name> [same selection] --apply-token <preview-token> --confirm <exact-confirmation-text>
+```
+
+For an associated change, provide the full existing selection: the bundle, all profile flags or `--no-profiles` for an empty profile list, and every native `--skill-host` selection. Omit selection flags only for an unassociated change. Re-pin never installs or removes resources and never changes an association. A healthy witnessed pin is an event-free no-op preview without a token. A blocked preview can return exit code zero, so inspect `data.data.ready` in the JSON envelope and review the target and any required warning before proceeding. Missing or stale tokens and missing or mismatched confirmation text fail without applying; request a fresh preview after any change.
+
+Re-pin does not repair unknown history. The previous creation source stays unknown and earlier creation, migration, and re-pin records are preserved; the new event records the independently verified current location. Do not infer the historical creation revision from current schema validity.
+
+Recovery inspection is read-only. It uses the exact selection already stored in the journal and does not accept selection flags:
+
+```sh
+opsx-schema --project <root> --json change re-pin <change> <same-schema-name> --recover
+opsx-schema --project <root> --json change re-pin <change> <same-schema-name> --recover --recovery-token <fresh-recovery-token> --confirm <exact-recovery-confirmation>
+```
+
+Recovery needs a separate fresh token and exact confirmation from the recovery inspection; the original Apply token cannot authorize it. Inspection identifies absent, present, complete, or conflicting intent. Recovery rechecks the journal, live project and schema inputs, the verified target, resource selection, and operation-owned staging. It replays the recorded bytes once when absent, verifies and completes an exact-present receipt, and leaves conflicts for manual inspection. A completed journal is reported as `complete` with no Apply token; because there is no remaining work, the overall preview can still be `PREVIEW_BLOCKED` and exit non-zero. Completed version-1 journals remain readable. A pending version-1 journal fails closed with `REPIN_RECOVERY_LEGACY_UNSUPPORTED` before returning a recovery state or token; do not rewrite it as version 2.
+
+Apply and recovery share `openspec/.opsx-switch.lock` with other project mutations. It is a cooperative local lock, not protection from unrelated external edits. The journal and repeated checks provide recovery evidence; they do not make the filesystem updates an atomic multi-file transaction. Preserve journal, provenance, stages, and lock evidence when a process is interrupted or a guard changes. Never remove a lock based only on its PID: manual resolution requires independently confirming the writer has stopped and that the exact lock identity and bytes have not changed.
+
 ## Preview, freshness and confirmation
 
 Every CLI mutation previews by default. Review its exact targets, proposed state, diagnostics and freshness token. To apply, repeat the same command with the token returned by that preview:
