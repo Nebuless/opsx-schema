@@ -19,7 +19,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { changeDirectory } from "../../src/archive/index.ts";
-import { applyChangeRePin, previewChangeRePin } from "../../src/cli/repin.ts";
+import {
+  applyChangeRePin,
+  previewChangeRePin,
+  previewChangeRePinRecovery,
+  recoverChangeRePin,
+} from "../../src/cli/repin.ts";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
 import { acquireProjectMutationLock } from "../../src/project-lock.ts";
 import { revisionRef } from "../../src/provenance/index.ts";
@@ -980,13 +985,15 @@ test("unknown isolated workflow status refuses a preview", async () => {
     json.mockRestore();
   }
 });
-test("apply and recovery remain explicitly refused", async () => {
+test("ordinary Apply tokens and recovery without a journal are refused", async () => {
   const f = await linkedFixture(roots);
   const before = await treeBytes(f.linked);
   for (const flags of [
     ["--apply-token", "fake"],
     ["--apply-token", ""],
+    ["--apply-token", "fake", "--recover"],
     ["--recover"],
+    ["--recovery-token", "fake"],
   ]) {
     const response = cli(
       f.linked,
@@ -997,7 +1004,14 @@ test("apply and recovery remain explicitly refused", async () => {
       ...flags,
     );
     expect(response.code).not.toBe(0);
-    expect(JSON.parse(response.output).ok).toBe(false);
+    const envelope = JSON.parse(response.output);
+    expect(envelope.ok).toBe(false);
+    if (flags.includes("--recover"))
+      expect(envelope.error.code).toBe(
+        flags.includes("--apply-token") ? "USAGE" : "REPIN_RECOVERY_NOT_FOUND",
+      );
+    if (flags.includes("--recovery-token"))
+      expect(envelope.error.code).toBe("USAGE");
     expect(await treeBytes(f.linked)).toEqual(before);
   }
 });
@@ -1372,7 +1386,7 @@ test("text CLI previews and reports refused options with nonzero status", async 
   const refused = run("--recover");
   expect(refused.exitCode).not.toBe(0);
   expect(new TextDecoder().decode(refused.stdout)).toContain(
-    "REPIN_NOT_IMPLEMENTED",
+    "REPIN_RECOVERY_NOT_FOUND",
   );
   expect(await treeBytes(f.linked)).toEqual(before);
 });
@@ -1455,7 +1469,6 @@ test("installed profile target permits a physical alias owner and rejects false 
         skillHosts: [],
         bundle: "default",
       },
-      undefined,
       resourceOptions,
     );
   const before = await treeBytes(f.linked);
@@ -1497,7 +1510,6 @@ test("installed profile target permits a physical alias owner and rejects false 
       skillHosts: [],
       bundle: "default",
     },
-    undefined,
     resourceOptions,
   );
   expect(selectedWrong.ok).toBe(false);
@@ -1568,11 +1580,46 @@ test("installed profile target permits a physical alias owner and rejects false 
   if (!fresh.ok || !fresh.confirmation) return;
   const beforePin = await readFile(path.join(directory, ".openspec.yaml"));
   const beforeSchema = await treeBytes(schemaRoot);
-  const applied = await apply(
-    fresh.confirmation.token,
-    fresh.confirmation.exactTarget,
+  const originalRename = fsPromises.rename;
+  let interrupted = false;
+  const renameSpy = spyOn(fsPromises, "rename").mockImplementation(
+    async (source, destination) => {
+      if (!interrupted && String(destination) === provenancePath) {
+        interrupted = true;
+        throw new Error(
+          "simulated interruption before associated receipt activation",
+        );
+      }
+      return originalRename(source, destination);
+    },
   );
-  expect(applied.ok, JSON.stringify(applied)).toBe(true);
+  try {
+    const applyAttempt = await apply(
+      fresh.confirmation.token,
+      fresh.confirmation.exactTarget,
+    );
+    expect(applyAttempt.ok).toBe(false);
+  } finally {
+    renameSpy.mockRestore();
+  }
+  expect(interrupted).toBe(true);
+  const recoveryReview = await previewChangeRePinRecovery(
+    f.linked,
+    f.change,
+    "portable",
+    resourceOptions,
+  );
+  expect(recoveryReview.ok, JSON.stringify(recoveryReview)).toBe(true);
+  if (!recoveryReview.ok || !recoveryReview.confirmation) return;
+  const recovered = await recoverChangeRePin({
+    rootInput: f.linked,
+    changeInput: f.change,
+    schemaInput: "portable",
+    recoveryToken: recoveryReview.confirmation.token,
+    confirmationText: recoveryReview.confirmation.exactTarget,
+    resourceOptions,
+  });
+  expect(recovered.ok, JSON.stringify(recovered)).toBe(true);
   const updated = JSON.parse(await readFile(provenancePath, "utf8"));
   expect(updated.rePins).toHaveLength(1);
   expect(updated.created).toEqual(unknown);
@@ -1994,6 +2041,21 @@ for (const version of [1, 2] as const) {
       );
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe("REPIN_RECOVERY_REQUIRED");
+      if (version === 1) {
+        const recovery = cli(
+          f.fixture.linked,
+          "change",
+          "re-pin",
+          "sample",
+          "portable",
+          "--recover",
+        );
+        expect(recovery.code).not.toBe(0);
+        const recoveryEnvelope = JSON.parse(recovery.output);
+        expect(recoveryEnvelope.data.error.code).toBe(
+          "REPIN_RECOVERY_LEGACY_UNSUPPORTED",
+        );
+      }
       expect(await readFile(f.receipt)).toEqual(receipt);
       expect(await readFile(f.journal)).toEqual(journalBytes);
       if (version === 1) expect(receipt).toEqual(before);
@@ -2105,6 +2167,7 @@ for (const edit of [
     const originalLstat = fsPromises.lstat;
     let stage = "";
     let stageIno = 0;
+    let replacementBytes: Buffer | undefined;
     let injected = false;
     const openSpy = spyOn(fsPromises, "open").mockImplementation(
       async (...args: Parameters<typeof fsPromises.open>) => {
@@ -2140,7 +2203,8 @@ for (const edit of [
         if (edit === "mode") await chmod(stage, 0o400);
         if (edit === "replacement") {
           const replacement = `${stage}.foreign`;
-          await writeFile(replacement, await readFile(stage));
+          replacementBytes = await readFile(stage);
+          await writeFile(replacement, replacementBytes);
           await chmod(replacement, (await stat(stage)).mode & 0o777);
           await rename(replacement, stage);
         }
@@ -2166,7 +2230,7 @@ for (const edit of [
     if (!result.ok)
       expect(result.error.code).toBe(
         edit === "receipt"
-          ? "REPIN_STALE"
+          ? "STALE_PREVIEW"
           : edit === "route"
             ? "REPIN_ROUTE_CHANGED"
             : "REPIN_STAGE_CHANGED",
@@ -2181,10 +2245,9 @@ for (const edit of [
     if (edit === "mode") expect((await stat(stage)).mode & 0o777).toBe(0o400);
     if (edit === "replacement") {
       expect((await stat(stage)).ino).not.toBe(stageIno);
-      const partial = JSON.parse(await readFile(f.journal, "utf8"));
-      expect(await readFile(stage)).toEqual(
-        Buffer.from(partial.intended, "base64"),
-      );
+      if (replacementBytes === undefined)
+        throw new Error("Replacement stage bytes were not captured");
+      expect(Buffer.compare(await readFile(stage), replacementBytes)).toBe(0);
     }
     if (edit === "bytes" || edit === "mode" || edit === "replacement")
       expect(JSON.parse(await readFile(f.journal, "utf8")).state).toBe(
@@ -2198,11 +2261,10 @@ for (const edit of ["bytes", "mode"] as const) {
     const f = await reviewedApplyFixture();
     const originalReceipt = await readFile(f.receipt);
     const originalOpen = fsPromises.open;
-    const originalLstat = fsPromises.lstat;
+    const originalRename = fsPromises.rename;
     let changedConfig = false;
     let changedStage = false;
     let changedStageMode = 0;
-    let stageCalls = 0;
     let stagePath = "";
     const openSpy = spyOn(fsPromises, "open").mockImplementation(
       async (...args: Parameters<typeof fsPromises.open>) => {
@@ -2210,37 +2272,20 @@ for (const edit of ["bytes", "mode"] as const) {
         const file = String(args[0]);
         if (file.includes(".opsx-provenance.json.") && file.endsWith(".tmp")) {
           stagePath = file;
-          const originalSync = handle.sync.bind(handle);
-          spyOn(handle, "sync").mockImplementation(async () => {
-            await originalSync();
-            if (!changedConfig) {
-              await fsPromises.appendFile(f.config, "# external config edit\n");
-              changedConfig = true;
-            }
-          });
         }
         return handle;
       },
     );
-    async function watchedLstat(
-      pathInput: PathLike,
-      options?: StatOptions & { bigint?: false },
-    ): Promise<Stats>;
-    async function watchedLstat(
-      pathInput: PathLike,
-      options: StatOptions & { bigint: true },
-    ): Promise<BigIntStats>;
-    async function watchedLstat(
-      pathInput: PathLike,
-      options?: StatOptions,
-    ): Promise<Stats | BigIntStats>;
-    async function watchedLstat(
-      pathInput: PathLike,
-      options?: StatOptions,
-    ): Promise<Stats | BigIntStats> {
-      if (String(pathInput) === stagePath) {
-        stageCalls++;
-        if (stageCalls === 7) {
+    const renameSpy = spyOn(fsPromises, "rename").mockImplementation(
+      async (source, destination) => {
+        const result = await originalRename(source, destination);
+        if (
+          !changedStage &&
+          stagePath !== "" &&
+          String(destination) === f.journal
+        ) {
+          await fsPromises.appendFile(f.config, "# external config edit\n");
+          changedConfig = true;
           if (edit === "bytes")
             await fsPromises.appendFile(stagePath, "foreign\n");
           else {
@@ -2250,18 +2295,15 @@ for (const edit of ["bytes", "mode"] as const) {
           }
           changedStage = true;
         }
-      }
-      return originalLstat(pathInput, options);
-    }
-    const lstatSpy = spyOn(fsPromises, "lstat").mockImplementation(
-      watchedLstat,
+        return result;
+      },
     );
     let result;
     try {
       result = await f.apply();
     } finally {
       openSpy.mockRestore();
-      lstatSpy.mockRestore();
+      renameSpy.mockRestore();
     }
     expect(changedConfig).toBe(true);
     expect(changedStage).toBe(true);

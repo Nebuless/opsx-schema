@@ -1,21 +1,26 @@
-import { OpsxError } from "../../project.ts";
+import { archiveChange } from "../../../cli/archive.ts";
 import { createChange } from "../../../cli/create.ts";
+import { handoffChangeSchema } from "../../../cli/handoff.ts";
 import {
   getArtifactInstructions,
   getChangeStatus,
   validateChangeAction,
 } from "../../../cli/read.ts";
-import { archiveChange } from "../../../cli/archive.ts";
-import { handoffChangeSchema } from "../../../cli/handoff.ts";
-import { applyChangeRePin, previewChangeRePin } from "../../../cli/repin.ts";
-import { flags, many, one, requireCount, skillBundle } from "../shared.ts";
-import { isSkillInstallHostId } from "../../../resources/index.ts";
-import type { SkillInstallHostId } from "../../../resources/index.ts";
 import {
-  preview as previewSchemaSwitch,
-  apply as applySchemaSwitch,
-} from "../../../switch/index.ts";
+  applyChangeRePin,
+  previewChangeRePin,
+  previewChangeRePinRecovery,
+  recoverChangeRePin,
+} from "../../../cli/repin.ts";
+import type { SkillInstallHostId } from "../../../resources/index.ts";
+import { isSkillInstallHostId } from "../../../resources/index.ts";
 import type { SwitchRequest } from "../../../switch/index.ts";
+import {
+  apply as applySchemaSwitch,
+  preview as previewSchemaSwitch,
+} from "../../../switch/index.ts";
+import { OpsxError } from "../../project.ts";
+import { flags, many, one, requireCount, skillBundle } from "../shared.ts";
 
 export async function commandChange(
   root: string,
@@ -94,6 +99,7 @@ export async function commandChange(
       "--skill-host": "repeat",
       "--no-profiles": "boolean",
       "--apply-token": "one",
+      "--recovery-token": "one",
       "--confirm": "one",
       "--recover": "boolean",
     });
@@ -101,7 +107,7 @@ export async function commandChange(
       parsed.positionals,
       2,
       2,
-      "change re-pin <change> <schema> [selection flags]",
+      "change re-pin <change> <schema> [selection flags] [--apply-token <token> --confirm <text>] | [--recover [--recovery-token <token> --confirm <text>] ]",
     );
     const hosts = many(parsed, "--skill-host");
     if (hosts.some((host) => !isSkillInstallHostId(host)))
@@ -110,10 +116,28 @@ export async function commandChange(
         "--skill-host must be opencode, omp, pi, atomic, or senpi.",
       );
     const noProfiles = one(parsed, "--no-profiles") !== undefined;
-    if (one(parsed, "--apply-token") && one(parsed, "--recover"))
+    const applyToken = one(parsed, "--apply-token");
+    const recoveryToken = one(parsed, "--recovery-token");
+    const recover = one(parsed, "--recover") !== undefined;
+    const hasSelection =
+      one(parsed, "--bundle") !== undefined ||
+      many(parsed, "--profile").length > 0 ||
+      hosts.length > 0 ||
+      noProfiles;
+    if (applyToken && (recover || recoveryToken))
       throw new OpsxError(
         "USAGE",
-        "--apply-token and --recover cannot be combined.",
+        "--apply-token cannot authorize recovery; use --recover --recovery-token with its exact confirmation.",
+      );
+    if (recoveryToken && !recover)
+      throw new OpsxError(
+        "USAGE",
+        "--recovery-token is only valid with --recover.",
+      );
+    if ((recover || recoveryToken) && hasSelection)
+      throw new OpsxError(
+        "USAGE",
+        "Recovery uses the exact selection stored in its journal; selection flags cannot be supplied.",
       );
     const selection = {
       profiles: many(parsed, "--profile"),
@@ -123,7 +147,6 @@ export async function commandChange(
         ? { bundle: skillBundle(one(parsed, "--bundle")) }
         : {}),
     };
-    const applyToken = one(parsed, "--apply-token");
     if (applyToken)
       return applyChangeRePin({
         rootInput: root,
@@ -134,16 +157,31 @@ export async function commandChange(
         selection,
       });
     if (one(parsed, "--confirm"))
-      throw new OpsxError(
-        "USAGE",
-        "--confirm is only valid with --apply-token.",
+      if (!recoveryToken)
+        throw new OpsxError(
+          "USAGE",
+          "--confirm is only valid with --apply-token or --recovery-token.",
+        );
+    if (recover || recoveryToken) {
+      if (recoveryToken)
+        return recoverChangeRePin({
+          rootInput: root,
+          changeInput: parsed.positionals[0]!,
+          schemaInput: parsed.positionals[1]!,
+          recoveryToken,
+          confirmationText: one(parsed, "--confirm"),
+        });
+      return previewChangeRePinRecovery(
+        root,
+        parsed.positionals[0]!,
+        parsed.positionals[1]!,
       );
+    }
     return previewChangeRePin(
       root,
       parsed.positionals[0]!,
       parsed.positionals[1]!,
       selection,
-      one(parsed, "--recover") ? "recover" : undefined,
     );
   }
   if (
