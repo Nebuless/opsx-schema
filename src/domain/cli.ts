@@ -1,7 +1,14 @@
 #!/usr/bin/env bun
 import { encode } from "@toon-format/toon";
 import { startDashboard } from "../tui/app.tsx";
-import { OpsxError } from "./project.ts";
+import { commandAdapters } from "./cli/commands/adapters.ts";
+import { commandVerify, doctorProject } from "./cli/commands/diagnostics.ts";
+import { commandChange, commandSchema } from "./cli/commands/lifecycle.ts";
+import { commandMcp } from "./cli/commands/mcp.ts";
+import { commandReads } from "./cli/commands/reads.ts";
+import { commandSchemas } from "./cli/commands/schemas.ts";
+import { commandSkills } from "./cli/commands/skills.ts";
+import type { GlobalOptions } from "./cli/shared.ts";
 import {
   errorMessage,
   globalOptions,
@@ -10,14 +17,7 @@ import {
   requireCount,
   statusOf,
 } from "./cli/shared.ts";
-import type { GlobalOptions } from "./cli/shared.ts";
-import { commandReads } from "./cli/commands/reads.ts";
-import { commandSchemas } from "./cli/commands/schemas.ts";
-import { commandChange, commandSchema } from "./cli/commands/lifecycle.ts";
-import { commandSkills } from "./cli/commands/skills.ts";
-import { commandMcp } from "./cli/commands/mcp.ts";
-import { commandAdapters } from "./cli/commands/adapters.ts";
-import { commandVerify, doctorProject } from "./cli/commands/diagnostics.ts";
+import { OpsxError } from "./project.ts";
 
 const HELP = `opsx-schema — project and OpenSpec workflow CLI
 
@@ -42,7 +42,9 @@ Change lifecycle (mutations preview by default):
   change archive <change> [--apply-token <token>]
   change schema <change> <schema> [--apply-token <token>]
   change re-pin <change> <schema> [--bundle default|recommended|all] [--profile <id> ... | --no-profiles] [--skill-host <host> ...] [--apply-token <token> --confirm <exact preview text>]
-    Preview is read-only. Apply requires the fresh token and exact confirmation text; --recover is not implemented.
+    Preview is read-only. Apply requires the fresh token and exact confirmation text.
+  change re-pin <change> <schema> --recover [--recovery-token <token> --confirm <exact recovery text>]
+    --recover inspects an exact pending journal without mutation. Recovery Apply requires the separate fresh recovery token and exact confirmation text.
 
 Schemas and profiles:
   schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--migrate <change> ...] [--apply-token <token>]
