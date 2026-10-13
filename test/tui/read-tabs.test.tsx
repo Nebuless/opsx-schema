@@ -1318,6 +1318,9 @@ test("long identities, bounded prefixes, scroll reset and resize stay readable i
         expect(frame).toContain("READ ONLY");
         expect(frame).toContain("Preview truncated");
         expect(frame).toContain("Esc detail");
+        frame = await waitForFrame(setup, (value) =>
+          value.includes("static-line-000"),
+        );
         const staticFrame = frame;
         await act(async () => {
           await Bun.sleep(100);
