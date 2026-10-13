@@ -970,6 +970,43 @@ async function previewChangeRePinRecoveryInternal(input: {
     )
       disposition = journal.state === "complete" ? "complete" : "present";
     if (stages.disposition === "conflicted") disposition = "conflicted";
+    if (disposition === "conflicted") {
+      const data: InternalRePinRecoveryPreview = {
+        ready: false,
+        change,
+        from: journal.from,
+        to: journal.to,
+        ...(journal.historicalOrigin
+          ? { historicalOrigin: journal.historicalOrigin }
+          : {}),
+        recovery: {
+          disposition,
+          operationId: journal.operationId,
+          journalState: journal.state,
+          target: journal.target,
+          expectedDigest: journal.expectedDigest,
+          intendedDigest: journal.intendedDigest,
+          detail:
+            "The receipt or a recovery stage conflicts with the recorded intent; preserve the evidence and resolve it manually.",
+        },
+        receipt,
+        receiptStage: stages.receiptStage,
+        journal,
+        journalSnapshot,
+        selection: {
+          profiles: [...journal.selection.profiles],
+          noProfiles: journal.selection.noProfiles,
+          skillHosts: [...journal.selection.skillHosts],
+          ...(journal.selection.bundle
+            ? { bundle: journal.selection.bundle }
+            : {}),
+        },
+        confirmationText: "",
+        inputDigest: "",
+        stageFingerprint: stages.fingerprint,
+      };
+      return success(action, "preview", target, data);
+    }
 
     const selection: RePinSelection = {
       profiles: [...journal.selection.profiles],

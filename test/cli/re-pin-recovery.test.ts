@@ -939,6 +939,97 @@ test("recovery preserves an explicitly empty associated selection and project re
   }
 }, 120000);
 
+test("malformed conflicting receipt is classified read-only without recovery authority", async () => {
+  const state = await pendingFixture();
+  let passed = false;
+  try {
+    const reviewed = await previewChangeRePinRecovery(
+      state.root,
+      state.fixture.change,
+      "portable",
+    );
+    expect(reviewed.ok).toBe(true);
+    if (!reviewed.ok || !reviewed.confirmation)
+      throw new Error(
+        "Expected a recovery token before introducing the conflict",
+      );
+    const info = await fsPromises.lstat(state.receipt);
+    const identity = { dev: info.dev, ino: info.ino, mode: info.mode & 0o777 };
+    await writeFile(state.receipt, "{", { mode: identity.mode });
+    const before = await treeBytes(state.root);
+
+    const inspection = await previewChangeRePinRecovery(
+      state.root,
+      state.fixture.change,
+      "portable",
+    );
+    expect(inspection).toMatchObject({
+      ok: true,
+      data: {
+        ready: false,
+        recovery: { disposition: "conflicted" },
+      },
+    });
+    if (inspection.ok) expect(inspection.confirmation).toBeUndefined();
+
+    const json = cli(
+      state.root,
+      "change",
+      "re-pin",
+      state.fixture.change,
+      "portable",
+      "--recover",
+    );
+    expect(json.code).not.toBe(0);
+    const envelope = JSON.parse(json.output);
+    expect(envelope.data.data.ready).toBe(false);
+    expect(envelope.data.data.recovery.disposition).toBe("conflicted");
+    expect(envelope.data.confirmation).toBeUndefined();
+    const textResult = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        path.resolve(import.meta.dir, "../../src/domain/cli.ts"),
+        "--project",
+        state.root,
+        "change",
+        "re-pin",
+        state.fixture.change,
+        "portable",
+        "--recover",
+      ],
+      cwd: state.root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(textResult.exitCode).not.toBe(0);
+    const text = new TextDecoder().decode(textResult.stdout);
+    expect(text).toContain("conflicted");
+    expect(text).toContain("PREVIEW_BLOCKED");
+
+    const refused = await recoverChangeRePin({
+      rootInput: state.root,
+      changeInput: state.fixture.change,
+      schemaInput: "portable",
+      recoveryToken: reviewed.confirmation.token,
+      confirmationText: reviewed.confirmation.exactTarget,
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(refused.error.code).toMatch(/STALE|CONFLICT|INPUTS/);
+    expect(await treeBytes(state.root)).toEqual(before);
+    const afterInfo = await fsPromises.lstat(state.receipt);
+    expect({
+      dev: afterInfo.dev,
+      ino: afterInfo.ino,
+      mode: afterInfo.mode & 0o777,
+    }).toEqual(identity);
+    expect(await readFile(state.receipt, "utf8")).toBe("{");
+    passed = true;
+  } finally {
+    await rm(state.roots[0]!, { recursive: true, force: true });
+  }
+}, 120000);
+
 test("conflicted receipt intent stays actionable and read-only", async () => {
   const state = await pendingFixture();
   let passed = false;
