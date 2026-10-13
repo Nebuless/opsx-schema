@@ -5,9 +5,16 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-13
+
+### Added
+
+- Preserve Git-tracked project-local schema pins across linked worktrees sharing the recorded Git common-directory identity.
+- Add reviewed same-name re-pin preview and apply for eligible relocated schema sources, with separate crash recovery and read-only conflict inspection.
+
 ### Fixed
 
-- Document reviewed same-name schema re-pin and separate crash-recovery confirmation, and exercise them through the extracted package CLI while preserving managed resources and prior history.
+- Keep schema selection and validation aligned with portable pin state without changing managed resources or earlier provenance history.
 
 ## [0.3.0] - 2026-10-03
 
