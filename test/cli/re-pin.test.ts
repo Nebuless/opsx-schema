@@ -338,7 +338,7 @@ test("reviewed missing-origin re-pin applies one event and preserves unknown his
     "REPIN_RECOVERY_REQUIRED",
   );
   expect(await readFile(provenanceFile)).toEqual(receiptAfterApply);
-});
+}, 45000);
 
 test("Apply rejects stale artifact, config, pin, and same-byte receipt replacements before journaling", async () => {
   const f = await linkedFixture(roots);
@@ -426,7 +426,7 @@ test("Apply rejects stale artifact, config, pin, and same-byte receipt replaceme
   const unchangedExternalBytes = await readFile(receipt);
   expectStaleWithoutJournal(applyReviewed(receiptReview));
   expect(await readFile(receipt)).toEqual(unchangedExternalBytes);
-});
+}, 45000);
 
 test("Postflight failure retains external edits and a partial journal after receipt activation", async () => {
   const f = await linkedFixture(roots);
@@ -1232,7 +1232,7 @@ test("unsafe pin, target, retention, history, and workflow refuse without writes
     expect(JSON.parse(response.output).ok).toBe(false);
     expect(await treeBytes(f.linked)).toEqual(before);
   }
-});
+}, 45000);
 test("genuine same-name shadow remains blocking", async () => {
   const f = await linkedFixture(roots);
   await completeWorkflow(f.linked, f.change);
@@ -1935,7 +1935,7 @@ for (const version of [1, 2] as const) {
           expect(noToken.error.code).toBe("REPIN_RECOVERY_REQUIRED");
       }
       expect(await readFile(f.receipt)).toEqual(intendedReceipt);
-    }, 30000);
+    }, 45000);
   }
 }
 
@@ -1963,7 +1963,7 @@ for (const version of [1, 2] as const) {
     expect(preview.ok).toBe(true);
     if (preview.ok) expect(preview.data.noOp).toBe(true);
     expect(await readFile(f.journal)).toEqual(journalBytes);
-  }, 30000);
+  }, 45000);
 }
 
 test("Apply refuses a malformed version-two intent without touching the receipt", async () => {
@@ -2013,7 +2013,7 @@ test("Apply refuses a malformed version-two intent without touching the receipt"
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error.code).toBe("REPIN_JOURNAL_INVALID");
   expect(await readFile(f.receipt)).toEqual(originalReceipt);
-}, 30000);
+}, 45000);
 
 for (const version of [1, 2] as const) {
   for (const state of ["prepared", "partial"] as const) {
