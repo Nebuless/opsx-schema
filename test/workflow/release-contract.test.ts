@@ -178,8 +178,8 @@ test("publication happens once, verification precedes tagging, and failure repor
   const tagIndex = steps.findIndex(
     (step) => step.name === "Create and push verified tag",
   );
-  const reportIndex = steps.findIndex(
-    (step) => step.name === "Report published version for manual investigation",
+  const reportIndex = steps.findIndex((step) =>
+    step.name.startsWith("Report published version for manual investigation"),
   );
   expect(publishIndex).toBeGreaterThanOrEqual(0);
   expect(verifyIndex).toBeGreaterThan(publishIndex);
@@ -194,7 +194,7 @@ test("publication happens once, verification precedes tagging, and failure repor
   expect(steps[publishIndex]!.id).toBe("publish");
   expect(steps[tagIndex]!.if).toBe("success()");
   expect(steps[reportIndex]!.if).toBe(
-    "failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure')",
+    "failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure') && steps.release_page.outcome != 'success'",
   );
   expect(
     commands.match(/npm publish --provenance --access public/g),
@@ -206,10 +206,18 @@ test("publication happens once, verification precedes tagging, and failure repor
   );
   expect(commands).toContain('release-guard.mjs" verify');
   expect(commands).toContain("release-guard.mjs tag");
-  expect(commands).toContain("Do not retry or tag automatically");
-  expect(commands).not.toMatch(
-    /gh release create|softprops\/action-gh-release|npm publish.*\bretry\b/i,
+  expect(commands).toContain("Do not retry npm publication or tag creation");
+  const releasePageIndex = steps.findIndex(
+    (step) => step.name === "Create GitHub Release",
   );
+  expect(releasePageIndex).toBeGreaterThan(tagIndex);
+  expect(steps[releasePageIndex]!.if).toBe("success()");
+  expect(steps[releasePageIndex]!.env?.GH_TOKEN).toBe("${{ github.token }}");
+  expect(steps[releasePageIndex]!.run).toContain("gh release create");
+  expect(steps[releasePageIndex]!.run).toContain("release-guard.mjs notes");
+  expect(reportIndex).toBeGreaterThan(releasePageIndex);
+  expect(commands).not.toMatch(/npm publish.*\bretry\b/i);
+  expect(commands).toContain("repair the GitHub Release page manually");
 });
 
 test("protected publish job rechecks current main, CI, version vacancy and external readiness", async () => {
@@ -355,4 +363,142 @@ test("terminal registry errors and incorrect versions fail without retry or inst
     if (mode === "auth") expect(result.output).toContain("E401");
     expect(result.commands).not.toContain("publish");
   }
+});
+
+// Execute workflow shell bodies with external writes replaced by local command fakes.
+test("publication outcomes gate page attempts and manual repair reports", async () => {
+  const workflow = await readReleaseWorkflow();
+  const steps = workflow.jobs.publish.steps;
+  const publishIndex = steps.findIndex((step) => step.id === "publish");
+  const report = steps.find((step) =>
+    step.name.startsWith("Report published version"),
+  )!;
+  const page = steps.find((step) => step.id === "release_page")!;
+  for (const failAt of [
+    "checkout",
+    "readiness",
+    "publish",
+    "verify",
+    "tag",
+    "page",
+    "none",
+    "auth",
+  ]) {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "release-outcomes-"));
+    const bin = path.join(directory, "bin");
+    mkdirSync(bin);
+    for (const name of ["npm", "node", "git", "gh"]) {
+      const executable = path.join(bin, name);
+      writeFileSync(
+        executable,
+        `#!/bin/bash
+set -euo pipefail
+name="$(basename "$0")"
+action="$name $*"
+printf '%s\\n' "$action" >> "$COMMAND_LOG"
+case "$action" in
+  "npm publish "*) test "$FAIL_AT" != publish ;;
+  "node "*" tag") test -f "$PROVENANCE_MARKER"; test "$FAIL_AT" != tag ;;
+  "node "*" notes") printf '%s\n' '- Curated change.' > "$NOTES_FILE" ;;
+  "gh release create "*)
+    test -n "\${GH_TOKEN:-}"
+    test -s "$NOTES_FILE"
+    test "$FAIL_AT" != page ;;
+  "git config "*) ;;
+  *) echo "Unexpected command: $action" >&2; exit 2 ;;
+esac
+`,
+      );
+      chmodSync(executable, 0o755);
+    }
+    const log = path.join(directory, "commands");
+    writeFileSync(log, "");
+    const marker = path.join(directory, "verified");
+    const env = {
+      ...process.env,
+      PATH: bin + ":" + process.env.PATH,
+      FAIL_AT: failAt,
+      COMMAND_LOG: log,
+      PROVENANCE_MARKER: marker,
+      EXPECTED_VERSION: "1.2.3",
+      REQUESTED_TAG: "v1.2.3",
+      RELEASE_SHA: "a".repeat(40),
+      DRY_RUN: "false",
+      NOTES_FILE: path.join(directory, "notes.md"),
+    };
+    let failure = ["checkout", "readiness"].includes(failAt);
+    let publishOutcome = "skipped";
+    let pageOutcome = "skipped";
+    for (const step of steps.slice(publishIndex, steps.indexOf(report))) {
+      if (failure) continue;
+      expect(step.if ?? "success()").toBe("success()");
+      let result;
+      if (step.name === "Verify registered package and provenance") {
+        // Cryptographic failure/no-marker is exercised separately with the real helper.
+        result = { status: failAt === "verify" ? 1 : 0 };
+        if (result.status === 0) writeFileSync(marker, env.RELEASE_SHA + "\n");
+      } else {
+        result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", step.run!], {
+          cwd: directory,
+          encoding: "utf8",
+          timeout: 5000,
+          env: {
+            ...env,
+            GH_TOKEN:
+              step.env?.GH_TOKEN === "${{ github.token }}" && failAt !== "auth"
+                ? "fixture-token"
+                : "",
+          },
+        });
+        expect(result.error).toBeUndefined();
+      }
+      const outcome = result.status === 0 ? "success" : "failure";
+      if (step.id === "publish") publishOutcome = outcome;
+      if (step.id === "release_page") pageOutcome = outcome;
+      failure = outcome === "failure";
+    }
+    // Evaluate the parsed GitHub condition against the observed outcome context.
+    const condition = report
+      .if!.replace("failure()", String(failure))
+      .replaceAll("steps.publish.outcome", JSON.stringify(publishOutcome))
+      .replaceAll("steps.release_page.outcome", JSON.stringify(pageOutcome));
+    const shouldReport = new Function(
+      "return (" + condition + ")",
+    )() as boolean;
+    expect(shouldReport).toBe(
+      !["checkout", "readiness", "none"].includes(failAt),
+    );
+    if (shouldReport) {
+      const result = spawnSync(
+        "bash",
+        ["-e", "-o", "pipefail", "-c", report.run!],
+        { cwd: directory, encoding: "utf8", env },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "Do not retry npm publication or tag creation",
+      );
+      expect(result.stdout).toContain(
+        "repair the GitHub Release page manually",
+      );
+    }
+    const commands = readFileSync(log, "utf8");
+    expect(commands.includes("gh release create")).toBe(
+      ["page", "none", "auth"].includes(failAt),
+    );
+    expect(commands.includes("release-guard.mjs tag")).toBe(
+      ["tag", "page", "none", "auth"].includes(failAt),
+    );
+    expect(pageOutcome).toBe(
+      failAt === "none"
+        ? "success"
+        : ["page", "auth"].includes(failAt)
+          ? "failure"
+          : "skipped",
+    );
+    expect(commands.match(/npm publish/g)?.length ?? 0).toBe(
+      ["checkout", "readiness"].includes(failAt) ? 0 : 1,
+    );
+  }
+  expect(page.env?.GH_TOKEN).toBe("${{ github.token }}");
 });

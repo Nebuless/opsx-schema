@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Lexer } from "marked";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -21,6 +22,7 @@ import {
   assertReleaseClaims,
   assertRegistryVersionUnused,
   assertReleaseMetadata,
+  releaseNotes,
   assertRequiredChecks,
   assertTagAuthorized,
   assertTagUnused,
@@ -669,5 +671,498 @@ test("post-publication verification failure leaves no marker for tagging", () =>
     expect(existsSync(marker)).toBe(false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("release notes stay within the exact curated section and include the prior real version section", () => {
+  const changelog =
+    "# Changelog\n\n## [Unreleased]\n\n## [1.2.0] - 2026-10-13\n\n### Added\n\n- Curated latest feature.\n\n## [1.1.0] - 2026-10-01\n\n### Fixed\n\n- Prior relevant fix.\n\n## [1.0.0] - 2026-09-01\n\n- Older real version.\n";
+  expect(releaseNotes(changelog, "1.2.0")).toContain("Curated latest feature.");
+  expect(releaseNotes(changelog, "1.2.0", "1.1.0")).toContain(
+    "compare/v1.1.0...v1.2.0",
+  );
+  expect(releaseNotes(changelog, "1.2.0")).not.toContain("Prior relevant fix.");
+  expect(releaseNotes(changelog, "1.1.0")).not.toContain("Older real version.");
+  expect(() => releaseNotes(changelog, "0.9.0")).toThrow(
+    "exactly one dated matching version entry",
+  );
+});
+
+test("notes preserve original code/comments and CRLF, ending at any visible level-2 heading", () => {
+  for (const boundary of [
+    "## [Unreleased]",
+    "## Maintenance",
+    "  ## Maintenance",
+    "##\tMaintenance",
+    "##",
+    "## [1.1.0] - 2026-10-01",
+  ]) {
+    const section = [
+      "## [1.2.0] - 2026-10-13",
+      "",
+      "- Curated change.",
+      "prefix <!-- inline comment --> suffix",
+      "<!-- hidden",
+      "## [9.0.0] - 2026-10-01",
+      "-->",
+      "~~~md",
+      "## [1.2.0] - 2026-10-13",
+      "<!-- code comment -->",
+      "<!--",
+      "~~~",
+      "    ## Indented example",
+      "    example()  ",
+    ].join("\r\n");
+    const changelog =
+      "<!-- prefix\r\ncomment -->\r\n" +
+      section +
+      "\r\n\r\n" +
+      boundary +
+      "\r\n- Not this release.\r\n";
+    expect(releaseNotes(changelog, "1.2.0")).toBe(section);
+    expect(() =>
+      assertReleaseMetadata(
+        {
+          EXPECTED_VERSION: "1.2.0",
+          REQUESTED_TAG: "v1.2.0",
+          RELEASE_BRANCH: "main",
+        },
+        { name: "opsx-schema", version: "1.2.0" },
+        changelog,
+      ),
+    ).not.toThrow();
+  }
+});
+
+test("notes use the metadata validator, not code or later sections as substantive notes", () => {
+  for (const body of [
+    "TODO",
+    "~~~md\nexample()\n~~~",
+    "    example()",
+    "<!-- hidden -->",
+  ]) {
+    expect(() =>
+      releaseNotes(
+        "## [1.2.0] - 2026-10-13\n" +
+          body +
+          "\n## Maintenance\n- Real later note.",
+        "1.2.0",
+      ),
+    ).toThrow("substantive release notes");
+  }
+});
+
+test("notes CLI selects the greatest lower authorized ancestor SemVer, including prereleases", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "release-notes-cli-"));
+  const bin = path.join(directory, "bin");
+  mkdirSync(bin);
+  const git = path.join(bin, "git");
+  writeFileSync(
+    git,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.join(" ") !== "tag --merged " + process.env.RELEASE_SHA + " --list v* --sort=-version:refname") process.exit(2);
+fs.appendFileSync(process.env.GIT_LOG, args.join(" ") + "\\n");
+if (process.env.TAG_LOOKUP_FAIL === "true") process.exit(1);
+console.log(process.env.ANCESTOR_TAGS);
+`,
+  );
+  chmodSync(git, 0o755);
+  const helper = path.join(repositoryRoot, ".github/scripts/release-guard.mjs");
+  const notesFile = path.join(directory, "notes.md");
+  for (const [version, tags, previous] of [
+    [
+      "1.2.0-rc.2",
+      "v1.1.0\nv1.2.0\nv1.2.0-rc.2\nv1.2.0-rc.1\nv1.2.0-rc.01\nv01.2.0\nvgarbage",
+      "1.2.0-rc.1",
+    ],
+    ["1.10.0", "v1.2.0\nv1.11.0\nv1.9.0", "1.9.0"],
+    ["1.2.0-rc.10", "v1.2.0-rc.2\nv1.2.0-rc.9\nv1.2.0-rc.11", "1.2.0-rc.9"],
+    ["1.2.0", "v1.2.0-beta.11\nv1.2.0-rc.2\nv1.2.0-alpha.z", "1.2.0-rc.2"],
+    ["1.2.0-beta.1", "v1.2.0-alpha.10\nv1.2.0-alpha.z", "1.2.0-alpha.z"],
+    ["0.1.0", "v0.1.0\nv9.0.0\nvgarbage", undefined],
+    ["0.1.0", "", undefined],
+  ]) {
+    const section = "## [" + version + "] - 2026-10-13\n\n- Curated change.";
+    writeFileSync(path.join(directory, "CHANGELOG.md"), section + "\n");
+    const env = {
+      ...process.env,
+      PATH: bin + ":" + process.env.PATH,
+      RELEASE_SHA: releaseSha,
+      EXPECTED_VERSION: version,
+      NOTES_FILE: notesFile,
+      ANCESTOR_TAGS: tags,
+      GIT_LOG: path.join(directory, "git-log"),
+    };
+    const result = spawnSync("node", [helper, "notes"], {
+      cwd: directory,
+      encoding: "utf8",
+      env,
+    });
+    expect(result.status).toBe(0);
+    const notes = readFileSync(notesFile, "utf8");
+    expect(notes).toBe(
+      section +
+        (previous
+          ? "\n\n[Compare changes since v" +
+            previous +
+            "](https://github.com/Nebuless/opsx-schema/compare/v" +
+            previous +
+            "...v" +
+            version +
+            ")"
+          : "") +
+        "\n",
+    );
+    const failedLookup = spawnSync("node", [helper, "notes"], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...env, TAG_LOOKUP_FAIL: "true" },
+    });
+    expect(failedLookup.status).not.toBe(0);
+    expect(failedLookup.stderr).toContain(
+      "Could not inspect ancestor release tags",
+    );
+  }
+  // A nonancestor v1.2.0-rc.9 is never supplied by the mocked --merged lookup.
+  expect(readFileSync(path.join(directory, "git-log"), "utf8")).toContain(
+    "--merged " + releaseSha,
+  );
+});
+
+function expectNotesCliSection(
+  section,
+  prefix = "",
+  boundary = "## Maintenance",
+) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "release-fence-cli-"));
+  const gitDirectory = spawnSync("git", ["rev-parse", "--absolute-git-dir"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  });
+  expect(gitDirectory.status).toBe(0);
+  const tags = spawnSync("git", ["tag", "--merged", "HEAD", "--list", "v*"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  });
+  expect(tags.status).toBe(0);
+  // Full local history selects v0.3.0; shallow CI checkouts may have no tags.
+  const previous = ["0.3.0", "0.2.0"].find((version) =>
+    tags.stdout.split(/\r?\n/).includes("v" + version),
+  );
+  const comparison = previous
+    ? "\n\n[Compare changes since v" +
+      previous +
+      "](https://github.com/Nebuless/opsx-schema/compare/v" +
+      previous +
+      "...v0.4.0)"
+    : "";
+  const notesFile = path.join(directory, "notes.md");
+  writeFileSync(
+    path.join(directory, "CHANGELOG.md"),
+    prefix + section + "\n\n" + boundary + "\n- Later section.\n",
+  );
+  const result = spawnSync(
+    "node",
+    [path.join(repositoryRoot, ".github/scripts/release-guard.mjs"), "notes"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_DIR: gitDirectory.stdout.trim(),
+        RELEASE_SHA: "HEAD",
+        EXPECTED_VERSION: "0.4.0",
+        NOTES_FILE: notesFile,
+      },
+    },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(readFileSync(notesFile, "utf8")).toBe(section + comparison + "\n");
+}
+
+test("F8 actual notes CLI preserves the retained four-space close repro", () => {
+  expectNotesCliSection(
+    "## [0.4.0] - 2026-10-13\n\n- Curated change.\n\n```md\n    ```\n## Example heading in fenced code\nexample\n```",
+  );
+});
+
+test("F9 actual notes CLI ends after the retained opener-info comment repro", () => {
+  expectNotesCliSection(
+    "## [0.4.0] - 2026-10-13\n\n- Curated change.\n\n```md <!--\nexample\n```",
+  );
+});
+
+for (const fence of ["```", "~~~"]) {
+  for (const indent of ["", " ", "  ", "   "]) {
+    test(
+      "notes CLI accepts " +
+        fence +
+        " closing fence with " +
+        indent.length +
+        " spaces and CRLF",
+      () => {
+        expectNotesCliSection(
+          [
+            "## [0.4.0] - 2026-10-13",
+            "",
+            "- Curated change.  ",
+            "",
+            fence + "md <!--", // Unindented opener ends the preceding list.
+            "## Hidden heading",
+            indent + fence + fence[0] + "\t ",
+            "- Note after close.  ",
+          ].join("\r\n"),
+        );
+      },
+    );
+  }
+  for (const invalidClose of [
+    "    " + fence,
+    "\t" + fence,
+    fence,
+    fence.slice(1),
+    fence === "```" ? "~~~" : "```",
+    fence + " text",
+    fence + "\u00a0",
+  ]) {
+    test(
+      "notes CLI keeps " +
+        JSON.stringify(invalidClose) +
+        " inside " +
+        fence +
+        " code",
+      () => {
+        expectNotesCliSection(
+          [
+            "## [0.4.0] - 2026-10-13",
+            "",
+            "- Curated change.",
+            fence + fence[0] + "md",
+            invalidClose,
+            "## Example heading in fenced code",
+            "example  ",
+            fence + fence[0],
+          ].join("\r\n"),
+        );
+      },
+    );
+  }
+}
+
+for (const fence of ["```", "~~~"]) {
+  test(
+    "tab compatibility preserves invalid " + fence + " closers as code",
+    () => {
+      for (const invalidClose of [
+        "    " + fence + fence[0] + "\t ",
+        "\t" + fence + fence[0] + "\t ",
+        fence + "\t ",
+        fence.slice(1) + "\t ",
+        (fence === "```" ? "~~~~" : "````") + "\t ",
+        fence + fence[0] + " text\t ",
+        fence + fence[0] + "\u00a0\t ",
+        fence + fence[0] + (fence === "~~~" ? "`" : "~") + "\t ",
+      ]) {
+        expectNotesCliSection(
+          [
+            "## [0.4.0] - 2026-10-13",
+            "",
+            "- Curated change.  ",
+            "",
+            fence + fence[0] + "md",
+            invalidClose,
+            "## Hidden heading",
+            "example  ",
+            fence + fence[0] + "\t ",
+            "- Note after close.  ",
+          ].join("\r\n"),
+        );
+      }
+    },
+  );
+  test(
+    "tab compatibility exposes prose only after a valid " + fence + " close",
+    () => {
+      const environment = {
+        EXPECTED_VERSION: "1.2.3",
+        REQUESTED_TAG: "v1.2.3",
+        RELEASE_BRANCH: "main",
+      };
+      const manifest = { name: "opsx-schema", version: "1.2.3" };
+      const codeOnly =
+        "## [1.2.3] - 2026-09-28\n\n" +
+        fence +
+        "md\nHidden prose.\n" +
+        fence +
+        "\t ";
+      expect(() =>
+        assertReleaseMetadata(environment, manifest, codeOnly),
+      ).toThrow("substantive release notes");
+      expect(() =>
+        assertReleaseMetadata(
+          environment,
+          manifest,
+          codeOnly + "\nVisible prose.",
+        ),
+      ).not.toThrow();
+    },
+  );
+}
+
+test("tab compatibility leaves the shared marked lexer unchanged", () => {
+  const source =
+    "## [1.2.3] - 2026-09-28\n\nVisible prose.\n\n```md\nHidden prose.\n```\t \n## Maintenance\nLater prose.";
+  const before = Lexer.lex(source);
+  expect(releaseNotes(source, "1.2.3")).toBe(
+    source.split("\n## Maintenance")[0],
+  );
+  expect(Lexer.lex(source)).toEqual(before);
+  expect(
+    before.some(
+      (block) => block.type === "heading" && block.text === "Maintenance",
+    ),
+  ).toBe(false);
+});
+
+test("tab compatibility preserves nested list and blockquote boundaries", () => {
+  for (const prefix of ["  ", "> "]) {
+    const section = [
+      "## [0.4.0] - 2026-10-13",
+      "",
+      "- Curated change.",
+      "",
+      ...(prefix === "  " ? ["- Example:"] : []),
+      prefix + "```md",
+      prefix + "## Hidden code heading",
+      prefix + "```\t ",
+      prefix + "## Nested heading",
+      "",
+      "Final prose with a\ttab.  ",
+    ].join("\r\n");
+    expectNotesCliSection(section);
+  }
+});
+
+test("notes CLI ignores fence openers inside comments and comment markers inside fence info", () => {
+  expectNotesCliSection(
+    [
+      "## [0.4.0] - 2026-10-13",
+      "",
+      "- Curated change.",
+      "<!-- hidden",
+      "```md",
+      "## Hidden comment heading",
+      "-->",
+      "<!-- inline -->",
+      "~~~md ` <!--",
+      "## Hidden tilde heading",
+      "~~~",
+      "<!-- after fence -->",
+      "- Final note.  ",
+    ].join("\r\n"),
+    "<!-- before release\r\n~~~md <!--\r\n## Hidden preface\r\n-->\r\n",
+  );
+});
+
+test("notes CLI rejects backticks in backtick fence info and four-space/tab openers", () => {
+  for (const opener of ["```md `", "    ```md", "\t~~~md"]) {
+    expectNotesCliSection(
+      "## [0.4.0] - 2026-10-13\n\n- Curated change.\n" + opener,
+    );
+  }
+});
+
+test("F10 actual notes CLI ends after the retained inline-code comment repro", () => {
+  expectNotesCliSection(
+    "## [0.4.0] - 2026-10-13\n\n- Curated change.\n- Document the `<!--` delimiter.",
+  );
+});
+
+test("F11 actual notes CLI ends at the retained Setext H2 boundary repro", () => {
+  expectNotesCliSection(
+    "## [0.4.0] - 2026-10-13\n\n- Curated change.",
+    "",
+    "Maintenance\n-----------",
+  );
+});
+
+test("F12 metadata accepts substantive Markdown table cells", () => {
+  for (const table of [
+    "| Area | Change |\n| --- | --- |\n| Recovery | Restores sessions after reconnect. |",
+    "| TBD | TBD |\n| --- | --- |\n| TBD | Restores sessions after reconnect. |",
+    "| Restores sessions after reconnect. | TBD |\n| --- | --- |\n| `example()` | <!-- hidden --> |",
+  ]) {
+    expect(() =>
+      assertReleaseMetadata(
+        {
+          EXPECTED_VERSION: "1.2.3",
+          REQUESTED_TAG: "v1.2.3",
+          RELEASE_BRANCH: "main",
+        },
+        { name: "opsx-schema", version: "1.2.3" },
+        "## [1.2.3] - 2026-10-13\n\n" + table,
+      ),
+    ).not.toThrow();
+  }
+});
+
+test("F12 notes preserve exact Markdown tables", () => {
+  const table =
+    "| Area | Change |\n| --- | --- |\n| Recovery | Restores sessions after reconnect. |";
+  const section = "## [1.2.3] - 2026-10-13\n\n" + table;
+  expect(
+    releaseNotes(section + "\n\n## Maintenance\n- Later note.", "1.2.3"),
+  ).toBe(section);
+});
+
+test("F12 actual notes CLI preserves table bytes and section boundaries", () => {
+  for (const newline of ["\n", "\r\n"]) {
+    expectNotesCliSection(
+      [
+        "## [0.4.0] - 2026-10-13",
+        "",
+        "| TBD | TBD |",
+        "| --- | --- |",
+        "| TBD | Restores\t会话 🚀 after reconnect.  |",
+      ].join(newline),
+      "<!-- Unicode preface: 会话 🚀 -->" + newline,
+      "Maintenance" + newline + "-----------",
+    );
+  }
+});
+
+test("F12 tables containing only code, comments or placeholders remain non-substantive", () => {
+  for (const [header, row] of [
+    ["`Area` | `Change`", "`Recovery` | `Restores sessions.`"],
+    [
+      "<!-- Area --> | <!-- Change -->",
+      "<!-- Recovery --> | <!-- Restores sessions. -->",
+    ],
+    ["TODO | TBD", "placeholder | coming soon"],
+    ["**TODO** | `Change`", "<!-- Recovery --> | **TBD**"],
+  ]) {
+    const changelog =
+      "## [1.2.3] - 2026-10-13\n\n| " +
+      header +
+      " |\n| --- | --- |\n| " +
+      row +
+      " |\n\n## Maintenance\n- Later substantive note.";
+    expect(() =>
+      assertReleaseMetadata(
+        {
+          EXPECTED_VERSION: "1.2.3",
+          REQUESTED_TAG: "v1.2.3",
+          RELEASE_BRANCH: "main",
+        },
+        { name: "opsx-schema", version: "1.2.3" },
+        changelog,
+      ),
+    ).toThrow("substantive release notes");
+    expect(() => releaseNotes(changelog, "1.2.3")).toThrow(
+      "substantive release notes",
+    );
   }
 });

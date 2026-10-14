@@ -10,14 +10,14 @@ Add a manually dispatched, dry-run-first npm publishing path for `opsx-schema` t
 
 - Publishing a package or creating a tag during this planning change.
 - Automatically releasing from commits, changing the five existing CI checks or branch-protection policy, and editing the legacy schema collection changelog.
-- Creating a GitHub Release or changing the package's runtime behavior.
+- Publishing npm automatically or changing the package's runtime behavior.
 
 ## What Changes
 
 - Operators can run a non-publishing release preflight with an exact version and tag; a real publication requires explicit opt-in and configured GitHub/npm release permissions.
 - CI reruns do not create false release failures, but a failed or incomplete authoritative required check blocks release.
 - A version heading without actual notes cannot pass preflight.
-- A successful publication creates a tag only after provenance verification; a failure after publication stops for investigation without retry or tag.
+- A successful publication creates a tag only after provenance verification, then creates a GitHub Release containing the exact curated changelog section and previous relevant real ancestor version comparison. A post-publication verification failure stops without retry or tag; a page-only failure after a successful tag requires manual page repair.
 
 ## Capabilities
 

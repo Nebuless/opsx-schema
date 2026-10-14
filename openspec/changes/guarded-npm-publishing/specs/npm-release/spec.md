@@ -46,3 +46,17 @@ Real publication SHALL require the configured protected GitHub release environme
 - **GIVEN** npm accepted a publication but provenance verification did not pass
 - **WHEN** the workflow reaches tagging
 - **THEN** no tag or second publish occurs, and the operator is told to investigate the published version
+
+
+### Requirement: Publish a curated GitHub Release after tagging
+The workflow SHALL create a GitHub Release only after npm publication and provenance verification succeed and the exact expected tag is pushed. Release notes SHALL contain exactly the curated target version section from root `CHANGELOG.md` and, when one exists, a comparison against the greatest lower authorized SemVer ancestor, including prereleases. Section boundaries SHALL be the next top-level level-2 heading under standard Markdown lexer semantics, including ATX and Setext headings, outside comments or code; nested headings SHALL NOT delimit sections. Original comments, fenced/indented code, trailing spaces, and line endings SHALL be preserved through original-source slicing, with lexer raw-source roundtrip mismatch failing closed. Compatibility syntax for ambiguous list-indented fixtures SHALL NOT be added. A per-call marked 17.0.1 fence-tokenizer workaround MAY recognize valid trailing-tab closers without changing leading indentation, marker identity/length, nested block boundaries, or original source offsets; malformed closers SHALL remain code. It SHALL NOT mutate the global lexer or normalize tabs throughout the input. A first release SHALL emit notes without a comparison. GitHub Release creation SHALL NOT change npm payload, version, or tag behavior. A page-creation failure after publication and successful tag SHALL report manual page repair and SHALL NOT retry npm publication or tag creation.
+
+#### Scenario: Verified publication and tag succeed
+- **GIVEN** npm publication and provenance verification succeeded and the exact version tag was pushed
+- **WHEN** the workflow creates the GitHub Release
+- **THEN** it uses the exact curated changelog section and previous relevant real ancestor comparison
+
+#### Scenario: GitHub Release creation fails after tagging
+- **GIVEN** npm publication, provenance verification, and exact tag push succeeded
+- **WHEN** GitHub Release page creation fails
+- **THEN** the workflow reports manual page repair and does not retry npm publication or tag creation

@@ -5,6 +5,10 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+### Added
+
+- Create a curated GitHub Release after verified npm publication and tagging, with notes derived from the matching root changelog section.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added
