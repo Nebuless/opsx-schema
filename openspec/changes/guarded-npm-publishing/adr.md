@@ -1,6 +1,7 @@
 # ADR Review Manifest
 
 - Status: completed
+- Loopback: user-approved GitHub Release page creation after verified npm publication and exact tagging; repository ADR 0006 remains Proposed and unchanged.
 - Review date: 2026-09-28
 
 ## Review Summary

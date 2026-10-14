@@ -2,6 +2,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { verify as verifySigstoreBundle } from "sigstore";
+import semver from "semver";
+import { getDefaults, Lexer, Tokenizer } from "marked";
 
 export const REQUIRED_CHECKS = [
   "Commit history",
@@ -125,32 +127,18 @@ export function assertProtectedReleaseEnvironment(environment) {
   }
 }
 
-function visibleReleaseMarkdown(changelog) {
-  const withoutComments = changelog.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
-  const visibleLines = [];
-  let openFence;
-  for (const line of withoutComments.split(/\r?\n/)) {
-    const fence = line.trim().match(/^(`{3,}|~{3,})(.*)$/);
-    if (openFence) {
-      if (
-        fence &&
-        fence[1][0] === openFence[0] &&
-        fence[1].length >= openFence.length &&
-        !fence[2].trim()
-      ) {
-        openFence = undefined;
-      }
-      visibleLines.push("");
-      continue;
-    }
-    if (fence) {
-      openFence = fence[1];
-      visibleLines.push("");
-      continue;
-    }
-    visibleLines.push(/^(?: {4}|\t)/.test(line) ? "" : line);
+function noteText(token) {
+  if (["code", "codespan", "html", "heading", "def", "hr", "space"].includes(token.type)) return "";
+  if (token.type === "list_item" && token.task && !token.checked) return "";
+  if (token.type === "table") {
+    return [token.header, ...token.rows].flat().map((cell) => cell.tokens.map(noteText).join("")).join("\n");
   }
-  return visibleLines.join("\n");
+  const children = token.items ?? token.tokens;
+  if (children) {
+    const separator = ["list", "list_item", "blockquote"].includes(token.type) ? "\n" : "";
+    return children.map(noteText).join(separator);
+  }
+  return token.text ?? "";
 }
 
 export function assertReleaseMetadata(environment, packageManifest, changelog) {
@@ -168,48 +156,72 @@ export function assertReleaseMetadata(environment, packageManifest, changelog) {
     throw new Error("Package name and version must match the requested release");
   }
 
-  const visibleChangelog = visibleReleaseMarkdown(changelog);
-  const headings = [...visibleChangelog.matchAll(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})\s*$/gm)];
-  const matching = headings.filter((heading) => heading[1] === version);
+  releaseSection(changelog, version);
+}
+
+function releaseSection(changelog, version) {
+  // Marked normalizes line endings. Keep a UTF-16 offset map for original slices.
+  const offsets = [];
+  let normalized = "";
+  for (let index = 0; index < changelog.length; index += 1) {
+    offsets.push(index);
+    const character = changelog[index];
+    normalized += character === "\r" ? "\n" : character;
+    if (character === "\r" && changelog[index + 1] === "\n") index += 1;
+  }
+  offsets.push(changelog.length);
+  const tokenizer = new Tokenizer();
+  // ponytail: marked 17.0.1 misses trailing-tab closers. Remove when its rule accepts tabs.
+  tokenizer.fences = function (source) {
+    const match = this.rules.block.fences.exec(source);
+    if (!match) return;
+    const openerEnd = source.indexOf("\n");
+    const closer = new RegExp("^ {0,3}" + match[1][0] + "{" + match[1].length + ",}[\\t ]*$", "gm");
+    closer.lastIndex = openerEnd + 1;
+    const closing = openerEnd < 0 ? null : closer.exec(match[0]);
+    if (!closing?.[0].includes("\t")) return Tokenizer.prototype.fences.call(this, source);
+    // Only the first valid closer changes, never indentation or nested Markdown input.
+    const end = closing.index + closing[0].length;
+    const lexical = source.slice(0, closing.index) + closing[0].replaceAll("\t", " ") + source.slice(end);
+    const token = Tokenizer.prototype.fences.call(this, lexical);
+    if (token?.raw.length !== end) throw new Error("CHANGELOG.md fence compatibility did not preserve source offsets");
+    token.raw = source.slice(0, end);
+    return token;
+  };
+  const blocks = Lexer.lex(normalized, { ...getDefaults(), tokenizer });
+  // Never silently use offsets if a lexer update stops preserving raw source.
+  if (blocks.map((block) => block.raw).join("") !== normalized) {
+    throw new Error("CHANGELOG.md lexer did not preserve source offsets");
+  }
+  let offset = 0;
+  const headings = [];
+  for (const [index, block] of blocks.entries()) {
+    if (block.type === "heading" && block.depth === 2) {
+      const dated = block.raw.match(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})[^\S\n]*(?:\n|$)/);
+      headings.push({ index, offset, dated });
+    }
+    offset += block.raw.length;
+  }
+  const matching = headings.filter((heading) => heading.dated?.[1] === version);
   if (matching.length !== 1) {
     throw new Error("CHANGELOG.md needs exactly one dated matching version entry");
   }
   const heading = matching[0];
-  const date = heading[2];
-  if (Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+  const date = heading.dated[2];
+  if (Number.isNaN(Date.parse(date + "T00:00:00Z")) || new Date(date + "T00:00:00Z").toISOString().slice(0, 10) !== date) {
     throw new Error("CHANGELOG.md version entry has an invalid ISO date");
   }
-  const sectionStart = heading.index + heading[0].length;
-  const nextHeading = visibleChangelog.slice(sectionStart).search(/^## /m);
-  const section = visibleChangelog.slice(
-    sectionStart,
-    nextHeading === -1 ? undefined : sectionStart + nextHeading,
-  );
-  const hasNote = section.split(/\r?\n/).some((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || /^#{1,6}\s/.test(trimmed)) {
-      return false;
-    }
-    const quotedText = trimmed.replace(/^(?:>\s*)+/, "");
-    const listText = quotedText.replace(/^(?:[-*+]\s*|\d+\.\s*)/, "").trim();
-    if (/^\[ \](?:\s|$)/.test(listText)) {
-      return false;
-    }
-    const note = listText
-      .replace(/^\[[xX]\]\s*/, "")
-      .replace(/!?\[([^\]]*)\]\([^)]+\)/g, "$1")
-      .replace(/<[^>]*>/g, "")
-      .trim();
-    return Boolean(
-      /[\p{L}\p{N}]/u.test(note) &&
-      !/^#{1,6}\s/.test(note) &&
-      !/^(?:`{3,}|~{3,})/.test(note) &&
-      !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note)
-    );
+  const nextHeading = headings.find((candidate) => candidate.index > heading.index);
+  const sectionEnd = nextHeading?.offset ?? normalized.length;
+  const section = blocks.slice(heading.index + 1, nextHeading?.index).map(noteText).join("\n");
+  const hasNote = section.split("\n").some((line) => {
+    const note = line.trim();
+    return /[\p{L}\p{N}]/u.test(note) && !/^\[[xX]\]$/.test(note) && !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note);
   });
   if (!hasNote) {
     throw new Error("CHANGELOG.md version entry needs substantive release notes");
   }
+  return changelog.slice(offsets[heading.offset], offsets[sectionEnd]).replace(/(?:\r?\n[\t ]*)+$/, "");
 }
 
 export function assertTagUnused(remoteTags, requestedTag) {
@@ -256,6 +268,11 @@ export function assertPublishedVersion(registryVersion, expectedVersion) {
   if (versions.length !== 1 || versions[0] !== expectedVersion) {
     throw new Error(`Published npm version did not match ${expectedVersion}`);
   }
+}
+
+export function releaseNotes(changelog, version, previousVersion) {
+  const section = releaseSection(changelog, version);
+  return previousVersion ? section + "\n\n[Compare changes since v" + previousVersion + "](https://github.com/Nebuless/opsx-schema/compare/v" + previousVersion + "...v" + version + ")" : section;
 }
 
 function releaseAttestations(registryAttestations) {
@@ -456,7 +473,26 @@ async function main() {
     }
     return;
   }
-  throw new Error("Expected checks, environment, metadata, packed, verify, or tag command");
+  if (action === "notes") {
+    const [changelog, tagResult] = await Promise.all([
+      readFile("CHANGELOG.md", "utf8"),
+      Promise.resolve(command("git", ["tag", "--merged", process.env.RELEASE_SHA, "--list", "v*", "--sort=-version:refname"])),
+    ]);
+    if (tagResult.status !== 0) throw new Error("Could not inspect ancestor release tags");
+    const version = process.env.EXPECTED_VERSION;
+    if (!VERSION_PATTERN.test(version) || semver.valid(version) !== version) {
+      throw new Error("Expected version must be an exact semantic version");
+    }
+    const previous = tagResult.stdout.split(/\r?\n/)
+      .filter((tag) => tag.startsWith("v"))
+      .map((tag) => tag.slice(1))
+      .filter((candidate) => VERSION_PATTERN.test(candidate) && semver.valid(candidate) === candidate && semver.lt(candidate, version))
+      .sort(semver.rcompare)[0];
+    const notes = releaseNotes(changelog, version, previous);
+    await writeFile(process.env.NOTES_FILE, notes + "\n");
+    return;
+  }
+  throw new Error("Expected checks, environment, metadata, packed, verify, tag, or notes command");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

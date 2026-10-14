@@ -204,9 +204,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           node .github/scripts/release-guard.mjs tag
-      - name: Report published version for manual investigation
-        if: failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure')
+      - name: Create GitHub Release
+        id: release_page
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          RELEASE_SHA: ${{ github.sha }}
+          NOTES_FILE: ${{ runner.temp }}/release-notes.md
+        run: |
+          set -euo pipefail
+          node .github/scripts/release-guard.mjs notes
+          gh release create "v$EXPECTED_VERSION" --title "v$EXPECTED_VERSION" --notes-file "$NOTES_FILE" --verify-tag
+      - name: Report published version for manual investigation or GitHub Release repair
+        if: failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure') && steps.release_page.outcome != 'success'
         env:
           EXPECTED_VERSION: ${{ inputs.expected_version }}
         run: |
-          echo "::error::opsx-schema@$EXPECTED_VERSION may have been accepted by npm. Do not retry or tag automatically; inspect the registry and investigate the published version."
+          echo "::error::opsx-schema@$EXPECTED_VERSION may have been accepted by npm. Do not retry npm publication or tag creation. Inspect the registry and investigate the published version. If tagging succeeded, repair the GitHub Release page manually."

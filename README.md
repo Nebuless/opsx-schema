@@ -40,4 +40,6 @@ Commands that change files **preview only** on the first run. Review the preview
 
 See [workflows and schema choices](./docs/workflows.md) for all command families, what each schema is for, and a start-to-finish CLI path. The [command reference](./docs/commands.md) covers flags, output and approval rules. Contributors: [resource overview](./resources/README.md) and [contribution guide](./resources/CONTRIBUTING.md).
 
+For maintainers, [the manual npm release guide](./docs/npm-release.md) covers dry runs and the guarded publication flow. A successful verified npm release creates a GitHub Release from the curated changelog entry. Version 0.4.0 adds portable project-local schema pins across linked worktrees and reviewed re-pin with crash recovery. See the [v0.4.0 release](https://github.com/Nebuless/opsx-schema/releases/tag/v0.4.0).
+
 The schema collection extends [Hari Krishnan’s OpenSpec Custom Schemas](https://github.com/intent-driven-dev/openspec-schemas) ([resource license](./resources/LICENSE)); the CLI is MIT licensed.
