@@ -1,7 +1,7 @@
 # CI and local checks
 
 Run `bun run check` before opening a pull request. It checks formatting and lint
-with Biome, runs Qlty 0.644.0, checks TypeScript, exercises the application and
+with Biome, runs Qlty 0.651.0, checks TypeScript, exercises the application and
 packed distribution, and validates bundled resources. Qlty reports complexity
 and duplication as advisory findings; they do not block a pull request. Its
 configuration excludes bundled host assets, resource snapshots, and skills;
