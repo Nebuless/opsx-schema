@@ -366,7 +366,19 @@ test("terminal registry errors and incorrect versions fail without retry or inst
 });
 
 // Execute workflow shell bodies with external writes replaced by local command fakes.
-test("publication outcomes gate page attempts and manual repair reports", async () => {
+test.each([
+  { version: "1.2.3", prerelease: false },
+  { version: "0.4.0", prerelease: false },
+  { version: "10.20.30", prerelease: false },
+  { version: "1.2.0-rc.2", prerelease: true },
+  { version: "1.2.0-0", prerelease: true },
+  { version: "1.2.0-123", prerelease: true },
+  { version: "1.2.0-rc-candidate.2", prerelease: true },
+  { version: "1.2.0-rc.2-x", prerelease: true },
+])("publication outcomes gate page attempts and manual repair reports for $version", async ({
+  version,
+  prerelease,
+}) => {
   const workflow = await readReleaseWorkflow();
   const steps = workflow.jobs.publish.steps;
   const publishIndex = steps.findIndex((step) => step.id === "publish");
@@ -398,9 +410,18 @@ action="$name $*"
 printf '%s\\n' "$action" >> "$COMMAND_LOG"
 case "$action" in
   "npm publish "*) test "$FAIL_AT" != publish ;;
-  "node "*" tag") test -f "$PROVENANCE_MARKER"; test "$FAIL_AT" != tag ;;
-  "node "*" notes") printf '%s\n' '- Curated change.' > "$NOTES_FILE" ;;
+  "node "*" tag")
+    test "$#" = 2; test "$1" = .github/scripts/release-guard.mjs
+    test -f "$PROVENANCE_MARKER"; test "$FAIL_AT" != tag ;;
+  "node "*" notes")
+    test "$#" = 2; test "$1" = .github/scripts/release-guard.mjs
+    printf '%s\n' '- Curated change.' > "$NOTES_FILE" ;;
   "gh release create "*)
+    printf '%s\\0' "$@" > "$PAGE_ARGS"
+    expected=(release create "v$EXPECTED_VERSION" --title "v$EXPECTED_VERSION" --notes-file "$NOTES_FILE" --verify-tag)
+    test "$#" = 8 || test "$#" = 9
+    for argument in "\${expected[@]}"; do test "$1" = "$argument"; shift; done
+    if test "$#" = 1; then test "$1" = --prerelease; fi
     test -n "\${GH_TOKEN:-}"
     test -s "$NOTES_FILE"
     test "$FAIL_AT" != page ;;
@@ -420,8 +441,9 @@ esac
       FAIL_AT: failAt,
       COMMAND_LOG: log,
       PROVENANCE_MARKER: marker,
-      EXPECTED_VERSION: "1.2.3",
-      REQUESTED_TAG: "v1.2.3",
+      EXPECTED_VERSION: version,
+      REQUESTED_TAG: `v${version}`,
+      PAGE_ARGS: path.join(directory, "page-args"),
       RELEASE_SHA: "a".repeat(40),
       DRY_RUN: "false",
       NOTES_FILE: path.join(directory, "notes.md"),
@@ -483,6 +505,33 @@ esac
       );
     }
     const commands = readFileSync(log, "utf8");
+    if (["page", "none", "auth"].includes(failAt)) {
+      const argumentsReceived = readFileSync(env.PAGE_ARGS, "utf8")
+        .split("\0")
+        .slice(0, -1);
+      expect(argumentsReceived).toEqual([
+        "release",
+        "create",
+        `v${version}`,
+        "--title",
+        `v${version}`,
+        "--notes-file",
+        env.NOTES_FILE,
+        "--verify-tag",
+        ...(prerelease ? ["--prerelease"] : []),
+      ]);
+      expect(
+        argumentsReceived.filter((argument) => argument === "--prerelease"),
+      ).toHaveLength(prerelease ? 1 : 0);
+      expect(commands.indexOf("release-guard.mjs notes")).toBeGreaterThan(
+        commands.indexOf("release-guard.mjs tag"),
+      );
+      expect(commands.indexOf("gh release create")).toBeGreaterThan(
+        commands.indexOf("release-guard.mjs notes"),
+      );
+    } else {
+      expect(existsSync(env.PAGE_ARGS)).toBe(false);
+    }
     expect(commands.includes("gh release create")).toBe(
       ["page", "none", "auth"].includes(failAt),
     );

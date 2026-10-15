@@ -215,7 +215,11 @@ jobs:
         run: |
           set -euo pipefail
           node .github/scripts/release-guard.mjs notes
-          gh release create "v$EXPECTED_VERSION" --title "v$EXPECTED_VERSION" --notes-file "$NOTES_FILE" --verify-tag
+          release_flags=()
+          if [[ "$EXPECTED_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "v$EXPECTED_VERSION" --title "v$EXPECTED_VERSION" --notes-file "$NOTES_FILE" --verify-tag "${release_flags[@]}"
       - name: Report published version for manual investigation or GitHub Release repair
         if: failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure') && steps.release_page.outcome != 'success'
         env:
