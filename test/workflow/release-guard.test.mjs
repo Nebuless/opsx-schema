@@ -1166,3 +1166,546 @@ test("F12 tables containing only code, comments or placeholders remain non-subst
     );
   }
 });
+
+const repairedEnvironment = {
+  EXPECTED_VERSION: "0.5.0",
+  REQUESTED_TAG: "v0.5.0",
+  RELEASE_BRANCH: "main",
+};
+const repairedManifest = { name: "opsx-schema", version: "0.5.0" };
+
+function expectRepairedCli(changelog, section, error) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "release-f13-f14-"));
+  try {
+    const bin = path.join(directory, "bin");
+    mkdirSync(bin);
+    // Only local stubs run. Neither CLI action can query or mutate a remote.
+    for (const [name, script] of [
+      [
+        "git",
+        '#!/bin/sh\ncase "$1" in tag|ls-remote) exit 0;; *) exit 2;; esac\n',
+      ],
+      ["npm", '#!/bin/sh\necho "npm error code E404" >&2\nexit 1\n'],
+    ]) {
+      writeFileSync(path.join(bin, name), script);
+      chmodSync(path.join(bin, name), 0o755);
+    }
+    writeFileSync(
+      path.join(directory, "package.json"),
+      JSON.stringify(repairedManifest),
+    );
+    writeFileSync(path.join(directory, "CHANGELOG.md"), changelog);
+    const notesFile = path.join(directory, "notes.md");
+    const env = {
+      ...process.env,
+      ...repairedEnvironment,
+      PATH: bin + ":" + process.env.PATH,
+      RELEASE_SHA: releaseSha,
+      NOTES_FILE: notesFile,
+    };
+    for (const action of ["metadata", "notes"]) {
+      const result = spawnSync(
+        "node",
+        [
+          path.join(repositoryRoot, ".github/scripts/release-guard.mjs"),
+          action,
+        ],
+        { cwd: directory, encoding: "utf8", env },
+      );
+      expect(result.status).toBe(error ? 1 : 0);
+      expect(result.stderr).toBe(error ? error + "\n" : "");
+    }
+    if (error) expect(existsSync(notesFile)).toBe(false);
+    else expect(readFileSync(notesFile, "utf8")).toBe(section + "\n");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+for (const newline of ["\n", "\r\n"]) {
+  for (const boundary of ["## Maintenance", "Maintenance\n-----------"]) {
+    test(
+      "F13 duplicate definitions preserve metadata, offsets and actual CLI " +
+        JSON.stringify([newline, boundary]),
+      () => {
+        const definition = '[same]: https://example.com "first"';
+        for (const [prefix, body, suffix] of [
+          [
+            definition + "\n\n" + definition + "\n\n",
+            "- Released feature.\n\n" + definition,
+            definition,
+          ],
+          [
+            definition + "\n\n",
+            definition + "\n\n- Released feature.\n\n" + definition,
+            definition + "\n\n" + definition,
+          ],
+          [
+            "",
+            "- Released feature.\n\n" + definition + "\n\n" + definition,
+            definition,
+          ],
+          [
+            definition + "\n\n",
+            "> ## Nested\n>\n> " +
+              definition +
+              "\n\n- Released feature.\n\n<!--\n## Hidden\n" +
+              definition +
+              "\n-->\n\n~~~md\n## Hidden\n" +
+              definition +
+              "\n~~~\n\n" +
+              definition,
+            definition,
+          ],
+        ]) {
+          const section = ("## [0.5.0] - 2026-10-13\n\n" + body).replaceAll(
+            "\n",
+            newline,
+          );
+          const changelog =
+            prefix.replaceAll("\n", newline) +
+            section +
+            newline +
+            newline +
+            boundary.replaceAll("\n", newline) +
+            newline +
+            "- Released feature." +
+            newline +
+            newline +
+            suffix.replaceAll("\n", newline);
+          expect(() =>
+            assertReleaseMetadata(
+              repairedEnvironment,
+              repairedManifest,
+              changelog,
+            ),
+          ).not.toThrow();
+          expect(releaseNotes(changelog, "0.5.0")).toBe(section);
+          expectRepairedCli(changelog, section);
+        }
+      },
+    );
+  }
+  test(
+    "F14 visible HTML prose passes metadata, extraction and actual CLI " +
+      JSON.stringify(newline),
+    () => {
+      for (const body of [
+        "<div>Released feature</div>",
+        '<div title="not > text">Released <strong>会话 🚀</strong> feature</div>',
+        "<div><!-- hidden --> <code>example()</code><script>hidden</script><style>hidden</style><p>Released feature</p></div>",
+        "<div><p>TODO</p><p>Released feature</p></div>",
+        "- <span>Released feature</span>",
+        "<div><code><code>hidden</code>hidden</code>Released feature</div>",
+        "<div>&#82;&#101;leased feature</div>",
+      ]) {
+        const section = ("## [0.5.0] - 2026-10-13\n\n" + body).replaceAll(
+          "\n",
+          newline,
+        );
+        const changelog =
+          section +
+          newline +
+          newline +
+          "## Maintenance" +
+          newline +
+          "- Later notes.";
+        expect(() =>
+          assertReleaseMetadata(
+            repairedEnvironment,
+            repairedManifest,
+            changelog,
+          ),
+        ).not.toThrow();
+        expect(releaseNotes(changelog, "0.5.0")).toBe(section);
+        expectRepairedCli(changelog, section);
+      }
+    },
+  );
+  test("F13 F14 non-substantive content cannot borrow repeated later prose " +
+    JSON.stringify(newline), () => {
+    for (const body of [
+      "[same]: https://example.com\n\n[same]: https://example.com",
+      "<div><!-- Released feature --></div>",
+      "<div></div>",
+      "<div><h2>Released feature</h2></div>",
+      "| TBD | TBD |\n| --- | --- |\n| <code>Released feature</code> | TBD |",
+      "<div><br></div>",
+      "<div><code>Released feature</code></div>",
+      "<pre>Released feature</pre>",
+      "<div><code><code>hidden</code>Released feature</code></div>",
+      "<div>\x60Released feature\x60</div>",
+      "<div><!-- <code>hidden</code> --></div>",
+      '<div><span title="Released feature"></span></div>',
+      "<div>&#x20;&#32;&nbsp;</div>",
+      "<script>Released feature</script>",
+      "<style>Released feature</style>",
+      "<div><style>Released feature</style></div>",
+      "<div><script>Released feature</script></div>",
+      "- <code>Released feature</code>",
+      "- <script>Released feature</script>",
+      "- <style>Released feature</style>",
+      "<div><p>TODO</p><p>TBD</p></div>",
+      "<div>placeholder</div>",
+      "<div>&nbsp;&#32;</div>",
+      "> ## Released feature\n\n~~~md\nReleased feature\n~~~\n\n<!-- Released feature -->",
+    ]) {
+      const changelog = (
+        "[same]: https://example.com\n\n## [0.5.0] - 2026-10-13\n\n" +
+        body +
+        "\n\n## Maintenance\n- Released feature.\n\n[same]: https://example.com"
+      ).replaceAll("\n", newline);
+      expect(() =>
+        assertReleaseMetadata(repairedEnvironment, repairedManifest, changelog),
+      ).toThrow("substantive release notes");
+      expect(() => releaseNotes(changelog, "0.5.0")).toThrow(
+        "substantive release notes",
+      );
+      expectRepairedCli(
+        changelog,
+        undefined,
+        "CHANGELOG.md version entry needs substantive release notes",
+      );
+    }
+  }, 30000);
+}
+
+test("F13 reference links keep first-definition-wins and paragraph continuation semantics", () => {
+  const prefix = '[same]: https://example.com "first"\n\n';
+  const section =
+    '## [0.5.0] - 2026-10-13\n\n[same]: https://example.net "second"\n\n[TODO][same]\n[same]: https://example.org\n';
+  // The last definition continues the existing paragraph, hence is visible prose.
+  expect(() =>
+    assertReleaseMetadata(
+      repairedEnvironment,
+      repairedManifest,
+      prefix + section,
+    ),
+  ).not.toThrow();
+  expect(releaseNotes(prefix + section, "0.5.0")).toBe(section.trimEnd());
+  const placeholder =
+    prefix +
+    '## [0.5.0] - 2026-10-13\n\n[SAME]: https://example.net "second"\n\n[TODO][same]';
+  expect(() => releaseNotes(placeholder, "0.5.0")).toThrow(
+    "substantive release notes",
+  );
+  expect(() =>
+    assertReleaseMetadata(repairedEnvironment, repairedManifest, placeholder),
+  ).toThrow("substantive release notes");
+});
+
+for (const newline of ["\n", "\r\n"]) {
+  test("F15 F16 HTML projection preserves adjacency and exclusion boundaries " +
+    JSON.stringify(newline), () => {
+    const negatives = [
+      "<div>T<strong>B</strong>D</div>",
+      "<div><span>TO</span><span>DO</span></div>",
+      "<div>TO<!-- hidden -->DO</div>",
+      "- T<i>B</i>D",
+      "**TO**<span>DO</span>",
+      "<div>&#84;<b>&#66;</b>&#68;</div>",
+      "| T<b>B</b>D |\n| --- |\n| TO<!-- -->DO |",
+      "| <code> | TODO |\n| --- | --- |\n| TBD | TBD |",
+      "- <code>\n\n  Released feature\n\n  </code>",
+      "> <div><code>\n>\n> Released **feature**\n>\n> </code></div>",
+      "- <code>\n- TODO",
+      "<div><p>TODO</p><p>TBD</p></div>",
+    ];
+    for (const tag of ["code", "pre", "script", "style", "h3"]) {
+      negatives.push(
+        "<div><" + tag + ">\n\nReleased feature\n\n</" + tag + "></div>",
+        "<div><" +
+          tag +
+          ">\n\n<strong>Released feature</strong>\n\n</" +
+          tag +
+          "></div>",
+        "<div><" +
+          tag +
+          "><" +
+          tag +
+          ">\n\nReleased feature\n\n</" +
+          tag +
+          ">\n\nStill excluded\n\n</" +
+          tag +
+          "></div>",
+      );
+    }
+    const positives = [
+      "<div>Released <strong>feature</strong></div>",
+      "<div>TO<br>Released feature</div>",
+      "<div><p>TODO</p><p>Released feature</p></div>",
+      "| TODO | Released feature |\n| --- | --- |\n| TBD | TBD |",
+      "| <code> | Released feature |\n| --- | --- |\n| TBD | TBD |",
+      "- <code>\n- Released feature",
+      "> <code>hidden\n\nReleased feature",
+      "- <code>hidden\n\nReleased feature",
+      "> - <code>\n>\n>   hidden\n>\n>   </code>\n>\n> Released feature",
+      "| TO | DO |\n| --- | --- |\n| TBD | TBD |",
+    ];
+    for (const tag of ["code", "pre", "script", "style", "h3"]) {
+      positives.push(
+        "<div><" +
+          tag +
+          ">\n\nHidden example\n\n</" +
+          tag +
+          ">Released feature</div>",
+        "<div><" +
+          tag +
+          ">\n\nHidden example\n\n</" +
+          tag +
+          "></div>\n\nReleased feature",
+      );
+    }
+    for (const [bodies, accepted] of [
+      [negatives, false],
+      [positives, true],
+    ]) {
+      for (const body of bodies) {
+        const section = ("## [0.5.0] - 2026-10-13\n\n" + body).replaceAll(
+          "\n",
+          newline,
+        );
+        const changelog =
+          section +
+          newline +
+          newline +
+          "## Maintenance" +
+          newline +
+          "- Later substantive notes must not leak.";
+        if (accepted) {
+          expect(() =>
+            assertReleaseMetadata(
+              repairedEnvironment,
+              repairedManifest,
+              changelog,
+            ),
+          ).not.toThrow();
+          expect(releaseNotes(changelog, "0.5.0")).toBe(section);
+          expectRepairedCli(changelog, section);
+        } else {
+          expect(() =>
+            assertReleaseMetadata(
+              repairedEnvironment,
+              repairedManifest,
+              changelog,
+            ),
+          ).toThrow("substantive release notes");
+          expect(() => releaseNotes(changelog, "0.5.0")).toThrow(
+            "substantive release notes",
+          );
+          expectRepairedCli(
+            changelog,
+            undefined,
+            "CHANGELOG.md version entry needs substantive release notes",
+          );
+        }
+      }
+    }
+  }, 60000);
+}
+
+for (const newline of ["\n", "\r\n"]) {
+  test("F17 heading HTML closes allow subsequent prose without counting headings " +
+    JSON.stringify(newline), () => {
+    for (const tag of ["code", "script", "style", "h3"]) {
+      for (const [heading, prose, accepted] of [
+        ["### </" + tag + ">", "Released feature", true],
+        ["### **</" + tag + ">** Heading only", "Released feature", true],
+        ["### **</" + tag + ">** Released heading only", "", false],
+        ["### Released heading only </" + tag + ">", "", false],
+        ["### `</" + tag + ">`", "Released feature", false],
+        ["### <!-- </" + tag + "> -->", "Released feature", false],
+      ]) {
+        const section = [
+          "## [0.5.0] - 2026-10-13",
+          "",
+          "<div><" + tag + ">",
+          "",
+          heading,
+          "",
+          ...(prose ? [prose, ""] : []),
+          "</div>",
+        ].join(newline);
+        const changelog =
+          section +
+          newline +
+          newline +
+          "## Maintenance" +
+          newline +
+          "- Later substantive notes must not leak.";
+        if (accepted) {
+          expect(() =>
+            assertReleaseMetadata(
+              repairedEnvironment,
+              repairedManifest,
+              changelog,
+            ),
+          ).not.toThrow();
+          expect(releaseNotes(changelog, "0.5.0")).toBe(section);
+          expectRepairedCli(changelog, section);
+        } else {
+          expect(() =>
+            assertReleaseMetadata(
+              repairedEnvironment,
+              repairedManifest,
+              changelog,
+            ),
+          ).toThrow("substantive release notes");
+          expect(() => releaseNotes(changelog, "0.5.0")).toThrow(
+            "substantive release notes",
+          );
+          expectRepairedCli(
+            changelog,
+            undefined,
+            "CHANGELOG.md version entry needs substantive release notes",
+          );
+        }
+      }
+    }
+  }, 30000);
+}
+for (const newline of ["\n", "\r\n"]) {
+  const tagCases = [
+    ["<div>TO<br-example>DO</br-example></div>", false],
+    ["TO<br-example>DO</br-example>", false],
+    ["<div>TO<div-example>DO</div-example></div>", false],
+    ["<div>TO<br>DO</div>", true],
+    ["<div>TO<div>DO</div></div>", true],
+    ["<div>TO<!-- hidden -->DO</div>", false],
+    ["<div>T<strong>B</strong>D</div>", false],
+  ];
+  for (const tag of [
+    "code",
+    "pre",
+    "script",
+    "style",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+  ]) {
+    tagCases.push(
+      [
+        "<div><" +
+          tag +
+          ' title="quoted > attribute">Restores sessions.</' +
+          tag +
+          "></div>",
+        false,
+      ],
+      [
+        "<div><" +
+          tag +
+          "-example>Restores sessions.</" +
+          tag +
+          "-example></div>",
+        true,
+      ],
+      [
+        "<div><" +
+          tag +
+          "></" +
+          tag +
+          "-example>Restores sessions.</" +
+          tag +
+          "></div>",
+        false,
+      ],
+      [
+        "<div><" +
+          tag.toUpperCase() +
+          ">Hidden</" +
+          tag.toUpperCase() +
+          ">Restores sessions.</div>",
+        true,
+      ],
+    );
+    if (tag !== "pre") {
+      tagCases.push(
+        [
+          "<div><" +
+            tag +
+            ">\n\n### **</" +
+            tag +
+            "-example>**\n\nRestores sessions.\n\n</" +
+            tag +
+            "></div>",
+          false,
+        ],
+        [
+          "<div><" +
+            tag +
+            ">\n\n### **</" +
+            tag +
+            ">** heading\n\nRestores sessions.\n\n</div>",
+          true,
+        ],
+      );
+    }
+  }
+  const breakCases = [];
+  for (const hardBreak of ["  \n", "\\\n"]) {
+    breakCases.push(
+      ["TODO" + hardBreak + "TBD", false],
+      ["TO" + hardBreak + "DO", true],
+      ["<code>Hidden" + hardBreak + "Still hidden</code>TODO", false],
+    );
+  }
+  for (const [finding, cases] of [
+    ["F18 complete HTML tag names", tagCases],
+    ["F19 Markdown hard breaks", breakCases],
+  ]) {
+    for (const accepted of [false, true]) {
+      test(finding +
+        " metadata/extraction/actual CLI " +
+        JSON.stringify([newline, accepted]), () => {
+        for (const [body, expected] of cases) {
+          if (expected !== accepted) continue;
+          const section = ("## [0.5.0] - 2026-10-13\n\n" + body).replaceAll(
+            "\n",
+            newline,
+          );
+          const changelog =
+            "<!-- 会话 🚀 -->" +
+            newline +
+            newline +
+            section +
+            newline +
+            newline +
+            "## Maintenance" +
+            newline +
+            "- Later notes must not leak.";
+          if (accepted) {
+            expect(() =>
+              assertReleaseMetadata(
+                repairedEnvironment,
+                repairedManifest,
+                changelog,
+              ),
+            ).not.toThrow();
+            expect(releaseNotes(changelog, "0.5.0")).toBe(section);
+            expectRepairedCli(changelog, section);
+          } else {
+            expect(() =>
+              assertReleaseMetadata(
+                repairedEnvironment,
+                repairedManifest,
+                changelog,
+              ),
+            ).toThrow("substantive release notes");
+            expect(() => releaseNotes(changelog, "0.5.0")).toThrow(
+              "substantive release notes",
+            );
+            expectRepairedCli(
+              changelog,
+              undefined,
+              "CHANGELOG.md version entry needs substantive release notes",
+            );
+          }
+        }
+      }, 60000);
+    }
+  }
+}

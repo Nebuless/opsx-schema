@@ -52,6 +52,7 @@ OpenSpec owns schema resolution, artifact instructions and readiness, change ide
 5. For packaged resource changes, follow [resource contribution rules](resources/CONTRIBUTING.md). Keep bundle content, `assets/` integrity metadata, and host projections consistent. Compound packaged commands originate in `resources/openspec/schemas/compound-intent-driven/adapters/shared/`, with four bundled host projections.
 6. Update affected specs, behavioral tests, command documentation, and the root `CHANGELOG.md` as appropriate. Review and update the root README.md in the same change whenever features or user-facing behavior change, including commands, prerequisites, and safety or approval rules. Keep it usage-focused and link detailed guides. Before release, verify its examples and links against the release commit. Leave imported skills and unrelated generated/local state untouched.
 7. Commit, push, merge, publish, or tag only when authorized. GitHub delivery uses a PR into protected `main`, Conventional Commits, required checks on the current head, and rebase merge. Normal CI never publishes npm. Follow [the release guide](docs/npm-release.md) for the separate manual release; never retry publication to resolve registry visibility or a missing tag.
+8. For each behavioral or workflow change, record the reason, affected paths, verification, and commit-based reversal in the selected change's journey. Identify remote effects that reverting code cannot undo.
 
 ## Verification
 

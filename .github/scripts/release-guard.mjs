@@ -127,18 +127,52 @@ export function assertProtectedReleaseEnvironment(environment) {
   }
 }
 
-function noteText(token) {
-  if (["code", "codespan", "html", "heading", "def", "hr", "space"].includes(token.type)) return "";
+function inlineNoteText(tokens, state) {
+  return tokens.map((token) => {
+    if (token.type === "html") {
+      // Marked owns tag/comment lexing, including quoted attributes. Only classify tags here.
+      const tag = /^<(\/?)([a-z][\w:-]*)(?=[\s/>])/i.exec(token.raw);
+      const name = tag?.[2].toLowerCase() ?? "";
+      if (/^(?:code|pre|script|style|h[1-6])$/.test(name)) {
+        if (!tag[1] && (!state.excluded || state.excluded === name)) {
+          state.excluded = name;
+          state.depth = (state.depth ?? 0) + 1;
+        } else if (tag[1] && state.excluded === name && --state.depth === 0) state.excluded = undefined;
+      }
+      // Inline formatting/comments retain adjacency. Only block/line tags split prose.
+      return /^(?:address|article|aside|blockquote|br|caption|center|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hgroup|hr|legend|li|main|menu|nav|ol|p|pre|script|section|style|summary|table|tbody|td|tfoot|th|thead|tr|ul)$/.test(name) ? "\n" : "";
+    }
+    return noteText(token, state);
+  }).join("").replace(/&#(x[\da-f]+|\d+);/gi, (_, value) => {
+    const code = value[0].toLowerCase() === "x" ? parseInt(value.slice(1), 16) : Number(value);
+    return code <= 0x10ffff ? String.fromCodePoint(code) : "";
+  }).replace(/&[a-z][\da-z]*;/gi, " ");
+}
+
+function noteText(token, state) {
+  if (token.type === "br") return "\n";
+  if (token.type === "html") return inlineNoteText(Lexer.lexInline(token.text), state);
+  if (token.type === "heading") {
+    inlineNoteText(token.tokens, state); // Observe HTML state, never heading prose.
+    return "";
+  }
+  if (["code", "codespan", "def", "hr", "space"].includes(token.type)) return "";
   if (token.type === "list_item" && token.task && !token.checked) return "";
   if (token.type === "table") {
-    return [token.header, ...token.rows].flat().map((cell) => cell.tokens.map(noteText).join("")).join("\n");
+    return [token.header, ...token.rows].flat().map((cell) => inlineNoteText(cell.tokens, { ...state })).join("\n");
   }
   const children = token.items ?? token.tokens;
   if (children) {
-    const separator = ["list", "list_item", "blockquote"].includes(token.type) ? "\n" : "";
-    return children.map(noteText).join(separator);
+    // Each list item/table cell/blockquote owns its exclusion state. Successive
+    // blocks within that container share it, as do ordinary inline children.
+    if (token.type === "list") return children.map((child) => noteText(child, { ...state })).join("\n");
+    if (["list_item", "blockquote"].includes(token.type)) {
+      const local = { ...state };
+      return children.map((child) => noteText(child, local)).join("\n");
+    }
+    return inlineNoteText(children, state);
   }
-  return token.text ?? "";
+  return state.excluded ? "" : token.text ?? "";
 }
 
 export function assertReleaseMetadata(environment, packageManifest, changelog) {
@@ -188,7 +222,17 @@ function releaseSection(changelog, version) {
     token.raw = source.slice(0, end);
     return token;
   };
-  const blocks = Lexer.lex(normalized, { ...getDefaults(), tokenizer });
+  const blocks = Lexer.lex(normalized, {
+    ...getDefaults(), tokenizer,
+    extensions: { block: [function (source, tokens) {
+      // Marked drops repeated definitions. Preserve every raw def while retaining
+      // first-definition-wins links and its paragraph-continuation semantics.
+      if (["paragraph", "text"].includes(tokens.at(-1)?.type)) return;
+      const token = this.lexer.tokenizer.def(source);
+      if (token) this.lexer.tokens.links[token.tag] ??= { href: token.href, title: token.title };
+      return token;
+    }] },
+  });
   // Never silently use offsets if a lexer update stops preserving raw source.
   if (blocks.map((block) => block.raw).join("") !== normalized) {
     throw new Error("CHANGELOG.md lexer did not preserve source offsets");
@@ -213,7 +257,8 @@ function releaseSection(changelog, version) {
   }
   const nextHeading = headings.find((candidate) => candidate.index > heading.index);
   const sectionEnd = nextHeading?.offset ?? normalized.length;
-  const section = blocks.slice(heading.index + 1, nextHeading?.index).map(noteText).join("\n");
+  const state = {};
+  const section = blocks.slice(heading.index + 1, nextHeading?.index).map((block) => noteText(block, state)).join("\n");
   const hasNote = section.split("\n").some((line) => {
     const note = line.trim();
     return /[\p{L}\p{N}]/u.test(note) && !/^\[[xX]\]$/.test(note) && !/^(?:TODO|TBD|TBA|placeholder|coming soon|none|n\/a)\b/i.test(note);
