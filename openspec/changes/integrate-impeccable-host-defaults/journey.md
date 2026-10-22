@@ -220,3 +220,65 @@ an existing import-order assist outside the repository's separate format/lint
 gate; no imports were changed. LSP diagnostics timed out, with TypeScript used
 as executable type evidence. A replacement aggregate now covers this final
 runtime state; it is pending and is not implied by the independent approval.
+
+Pushed through `ae1b5c7` and replied to all three repaired follow-ups; both new
+Codex threads were resolved after confirmed publication. Macroscope correctness
+passed, but its approvability summary still requests human review and cites an
+ownership concern without an unresolved thread or new inline finding. GitHub
+Codex subsequently raised P1 findings `4352985269` and `4352985280`: project
+`.omo/skills` and `.omo/mcp.json` may not be consumed by OmO Native. These
+challenge D3's original path assumption, not the user's requested OmO support.
+Both are dispatched to separate fixing subagents with explicit upstream and
+installed-runtime verification, distinguishing Native/Senpi from OpenCode OmO.
+Review approval is reopened. The replacement aggregate was intentionally stopped
+before completion because a host-contract repair would invalidate it; it is not
+a passing aggregate. No remote merge or main push occurred.
+
+The skill-path P1 `4352985269` is disproved without a code change. OmO Native
+`omo-ai` 5.1.41 supplies `SENPI_BRAND.configDir = ".omo"`; the pinned Senpi
+2026.10.21-1 engine uses that `CONFIG_DIR_NAME` for project package-manager
+discovery. Independent parent inspection verified the installed launcher and
+immutable upstream sources: `oh-my-openagent@331435952a2a3920cb56b3b160e83df7ddc7af12`
+`packages/omo-native/bin/lib/engine-environment.js:23-35`, and
+`senpi@c35cf40aeecbbb797e698e8c435cd72c54483b37`
+`packages/coding-agent/src/core/package-manager.ts:830-831,2353-2403`.
+The fixer exercised the actual branded package manager and skill loader in an
+isolated project: trusted `.omo/skills` loaded with zero diagnostics; untrusted
+discovery excluded it. Reply `4353040710` provides this evidence to Codex.
+Global `~/.omo/agent` does not exclude branded project resources. MCP loader
+verification remains independent and pending.
+
+MCP P1 `4352985280` is also disproved without edits. The actual installed
+5.1.41 branded engine config reader consumed exact Opsx preview bytes from
+`.omo/mcp.json` as an enabled HTTP project server with `auth: false`. Untrusted
+project configuration was excluded from spawnable servers; decoy root `.mcp.json`
+and `.senpi/mcp.json` were ignored. Parent inspected immutable native loader
+`senpi@dde7879b90b95e5da37326fc8fc178242b6c535b`
+`packages/coding-agent/src/core/extensions/builtin/mcp/config.ts:36-66`:
+it reads `join(cwd, CONFIG_DIR_NAME, "mcp.json")`; Claude root configuration
+requires explicit `settings.importConfigs` opt-in. The installed wrapper source
+matches upstream SHA-256. Reply `4353056962` supplies evidence and explains the
+OpenCode versus Native distinction. The existing 23 MCP tests, TypeScript,
+format/lint passed. No live server connection, provider Apply, or global writes.
+Independent Codex round 5 now reassesses both P1s against this evidence. The
+complete aggregate has restarted on unchanged runtime code and remains pending.
+
+Independent Codex round 5 approved `8d30948b..ae1b5c7` with no actionable
+findings and explicitly accepted both OmO P1s as resolved by branded-loader
+evidence. It reviewed dependency enforcement, immutable acquisition, ownership,
+rollback, locking, Pi trust/freshness, and CLI integration. Focused verification
+passed 15 tests and 125 assertions plus whitespace checks. It made no edits and
+did not rerun the parent's complete aggregate or actual runtime probes. Strict
+OpenSpec validation passed. Current-head GitHub checks passed Commit history,
+Quality, Resource checks, Package distribution smoke, and Macroscope correctness;
+Application tests and the local complete aggregate remain pending. Macroscope
+approvability is neutral and still requires human review, not an automated approval.
+
+After the evidence replies and independent Codex approval, both P1 review threads
+were resolved and GitHub returned an empty unresolved-thread list. Macroscope
+approvability comment `6348838630`, updated `2026-10-22T20:28:32Z`, now states
+only that the external skill acquisition and interconnected host/trust changes
+exceed its low-risk eligibility threshold. It names no remaining code defect or
+ownership concern. This is a human merge-approval requirement, not a failing
+correctness check; no automatic approval is claimed or bypassed. Final local
+aggregate and current-head Application tests remain pending.
