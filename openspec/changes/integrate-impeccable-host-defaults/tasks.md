@@ -7,7 +7,7 @@
 
 - [x] 2.1 Align schema declarations, integrity metadata, internal checks, and user guidance.
 - [x] 2.2 Prove required installation through the real CLI and packed consumer without optional MCP configuration.
-- [x] 2.3 Pass complete repository checks and strict OpenSpec validation on the publication branch.
+- [ ] 2.3 Pass complete repository checks and strict OpenSpec validation on the publication branch.
 
 ## 3. Reviewed publication
 

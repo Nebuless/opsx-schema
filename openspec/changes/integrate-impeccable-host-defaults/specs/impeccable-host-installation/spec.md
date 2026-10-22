@@ -25,6 +25,16 @@ The installer SHALL install schema-declared required skills before reporting sch
 - **WHEN** dependent schema activation runs
 - **THEN** the resource mutation lock is acquired and held through activation after locked state revalidation
 
+#### Scenario: Shared profile destination is selected under another alias
+- **GIVEN** default installation owns a skill at the shared codex and opencode destination
+- **WHEN** a reviewed selection uses the other profile alias without changing skill bytes
+- **THEN** default ownership records every declared profile sharing that destination so subsequent pin inspection accepts the intact target without rewriting noops
+
+#### Scenario: Pinned shell checkout ignores caller Git transformations
+- **GIVEN** the caller configures Git attributes, filters, or line ending transformations
+- **WHEN** the shell installer checks out a reviewed immutable skill revision
+- **THEN** checkout uses the same isolated Git configuration as clone and fetch
+
 ### Requirement: Distinct native OmO destinations
 The installer SHALL keep OmO `.omo/skills` and `.omo/mcp.json` distinct from standalone Senpi `.senpi` targets.
 
@@ -53,3 +63,10 @@ Pi MCP setup MUST distinguish inspected native mode from a verified existing leg
 - **GIVEN** unknown mode, conflicting active extensions, missing trust for a project-local target, or host evidence changed after preview
 - **WHEN** configuration is requested
 - **THEN** setup refuses without installing, migrating, or writing provider configuration
+
+#### Scenario: Untrusted malformed project settings
+- **GIVEN** a verified global adapter and malformed or non-object untrusted project settings
+- **WHEN** provider installation is previewed
+- **THEN** project settings are not semantically parsed before trust and do not hide the global adapter
+- **AND** safe file evidence is retained so settings or trust changes invalidate approval
+- **AND** malformed trusted project settings still refuse configuration
