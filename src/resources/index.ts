@@ -2998,31 +2998,6 @@ export async function withSkillInstall<T>(
         "Skill installation has target collisions and was not applied.",
         prepared.plan.diagnostics,
       );
-    const installTargets = [
-      ...prepared.plan.targets.map((target) => ({
-        target,
-        profiles: target.profiles,
-        hosts: [] as SkillInstallHostId[],
-      })),
-      ...prepared.plan.skillHosts.flatMap((host) =>
-        host.targets.map((target) => ({
-          target,
-          profiles: [] as string[],
-          hosts: [host.host],
-        })),
-      ),
-    ];
-    const unchangedTargets = installTargets
-      .filter(({ target }) => target.action === "noop")
-      .map(({ target }) => target.relativeTarget);
-    if (installTargets.every(({ target }) => target.action === "noop")) {
-      return await activate({
-        applied: false,
-        installedTargets: [],
-        unchangedTargets,
-        inputDigest: plan.inputDigest,
-      });
-    }
     release = await acquireLock(prepared.root);
     const locked = await buildInstallState(prepared.request, prepared.sources);
     if (locked.plan.inputDigest !== plan.inputDigest)
@@ -3061,6 +3036,9 @@ export async function withSkillInstall<T>(
         })),
       ),
     ];
+    const unchangedTargets = lockedTargets
+      .filter(({ target }) => target.action === "noop")
+      .map(({ target }) => target.relativeTarget);
     for (const { target, profiles, hosts } of lockedTargets) {
       if (target.action === "noop") continue;
       if (target.action !== "install")
