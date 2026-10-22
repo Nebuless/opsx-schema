@@ -26,16 +26,18 @@ The installer SHALL keep OmO `.omo/skills` and `.omo/mcp.json` distinct from sta
 Pi MCP setup MUST distinguish inspected native mode from a verified existing legacy adapter, preserve project trust and freshness checks, and never install or migrate an adapter implicitly.
 
 #### Scenario: Native Pi
-- **GIVEN** trusted project settings and inspected supported native Pi evidence
+- **GIVEN** project trust and an effective explicit `builtin:mcp` selector
 - **WHEN** a provider installation is previewed
 - **THEN** the target is `.pi/mcp.json` and Apply still requires immediate human approval
+- **AND** persisted changelog state alone never establishes native capability
 
 #### Scenario: Existing legacy adapter
 - **GIVEN** a verified installed adapter registered in effective project or global settings
 - **WHEN** provider installation is previewed
 - **THEN** the legacy `.mcp.json` target is retained
+- **AND** untrusted project extensions and disabled registrations do not shadow a verified global adapter
 
 #### Scenario: Ambiguous or changed host
-- **GIVEN** unknown mode, conflicting extensions, untrusted project settings, or host evidence changed after preview
+- **GIVEN** unknown mode, conflicting active extensions, missing trust for a project-local target, or host evidence changed after preview
 - **WHEN** configuration is requested
 - **THEN** setup refuses without installing, migrating, or writing provider configuration
