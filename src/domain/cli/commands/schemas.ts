@@ -9,9 +9,10 @@ import {
 } from "../../../bundled/index.ts";
 import { resolveRevision } from "../../../revisions/index.ts";
 import {
-  applySkillInstall,
+  withSkillInstall,
   defaultSkillProfiles,
   previewSkillInstall,
+  type SkillInstallResult,
 } from "../../../resources/index.ts";
 import { withProjectMutationLock } from "../../../project-lock.ts";
 import { validateBundledSchema, validateProjectSchema } from "../checks.ts";
@@ -90,13 +91,15 @@ export async function commandSchemas(
           plan.reason ?? "Schema target conflicts.",
         );
       return withProjectMutationLock(root, async () => {
-        const installedSkills = skills ? await applySkillInstall(skills) : null;
-        return {
+        const activate = async (
+          installedSkills: SkillInstallResult | null,
+        ) => ({
           phase: "applied",
           target: plan.destination,
           result: await installBundledSchema(root, name, plan),
           skills: installedSkills,
-        };
+        });
+        return skills ? withSkillInstall(skills, activate) : activate(null);
       });
     }
     return {
