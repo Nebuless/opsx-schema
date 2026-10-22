@@ -22,9 +22,12 @@ focused command handlers. Separate native OmO and Senpi host contracts.
 
 Preserve exact preview freshness, canonical path checks, ownership/collision
 refusal, project/resource lock order, portable origin witnesses, and recovery
-evidence. Pi inspection combines project/global package registrations rather than
-treating an empty project package list as a global override. Unknown native mode,
-custom-extension ambiguity, and changed host evidence fail closed. MCP Apply
+evidence. Pi inspection combines enabled project/global package registrations
+rather than treating an empty or disabled project package list as a global
+override. Untrusted project inputs do not affect a verified global adapter.
+Native evidence requires an effective explicit `builtin:mcp` selector, not
+persisted changelog state. Selector exclusions follow Pi's resolver precedence.
+Unknown native mode, active custom-extension ambiguity, and changed host evidence fail closed. MCP Apply
 retains immediate human approval of provider, host, target, and diff.
 
 ## Alternatives Considered

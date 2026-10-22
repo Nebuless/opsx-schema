@@ -1,17 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import {
+  link,
   lstat,
   mkdir,
   open,
-  readFile,
   readdir,
+  readFile,
   rename,
-  link,
   unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import YAML, { isAlias, isMap, isScalar, isSeq } from "yaml";
 import { OpsxError } from "../domain/project.ts";
 import { isMcpRecord, type McpRecord } from "./guards.ts";
@@ -549,20 +549,30 @@ async function inspectPiMcpAdapter(
           "Cannot safely inspect Pi package settings: " + settingsPath,
         );
       }
+      if (index === 0) globalSettings = settings;
+      else projectSettings = settings;
+    }
+    await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
+    evidence.trustStore = await readRegularFile(
+      trustStorePath,
+      "Pi project trust store",
+    );
+    const trust = inspectPiProjectTrust(
+      targetDir,
+      evidence.trustStore,
+      globalSettings,
+    );
+    let nativeEnabled: boolean | undefined;
+    for (const settings of trust.trusted
+      ? [globalSettings, projectSettings]
+      : [globalSettings]) {
+      if (!settings) continue;
       if (
         settings.packages !== undefined &&
         !Array.isArray(settings.packages)
       ) {
-        return unknown(
-          "Pi package settings must use a packages array: " + settingsPath,
-        );
+        return unknown("Pi package settings must use a packages array");
       }
-      if (index === 0) globalSettings = settings;
-      else projectSettings = settings;
-    }
-    let nativeEnabled: boolean | undefined;
-    for (const settings of [globalSettings, projectSettings]) {
-      if (!settings) continue;
       if (
         settings.extensions !== undefined &&
         !Array.isArray(settings.extensions)
@@ -579,7 +589,11 @@ async function inspectPiMcpAdapter(
           return unknown(
             "Pi extension patterns make the active MCP mode ambiguous",
           );
-        if (/^[+]?builtin:mcp$/.test(selector)) nativeEnabled = true;
+        if (
+          selector === "+builtin:mcp" ||
+          (selector === "builtin:mcp" && nativeEnabled !== false)
+        )
+          nativeEnabled = true;
         else if (selector === "-builtin:mcp" || selector === "!builtin:mcp")
           nativeEnabled = false;
         else if (!/^[+!-]?builtin:/.test(selector) && !/^[!-]/.test(selector)) {
@@ -587,6 +601,11 @@ async function inspectPiMcpAdapter(
             "Custom Pi extensions may replace /mcp; resolve the active MCP mode in Pi first",
           );
         }
+      }
+      if (settings === globalSettings) {
+        if (selectors.includes("-builtin:mcp")) nativeEnabled = false;
+        else if (selectors.includes("+builtin:mcp")) nativeEnabled = true;
+        else if (selectors.includes("!builtin:mcp")) nativeEnabled = false;
       }
       const packages: unknown[] = Array.isArray(settings.packages)
         ? settings.packages
@@ -611,7 +630,7 @@ async function inspectPiMcpAdapter(
     }
     for (const directory of [
       path.join(agentDir, "extensions"),
-      path.join(targetDir, ".pi", "extensions"),
+      ...(trust.trusted ? [path.join(targetDir, ".pi", "extensions")] : []),
     ]) {
       await assertSafeDirectoryChain(directory, true);
       const entries = (await lstatOrNull(directory))
@@ -623,47 +642,49 @@ async function inspectPiMcpAdapter(
           "Auto-loaded Pi extensions may replace /mcp; resolve the active MCP mode in Pi first",
         );
     }
-    const projectPackages: unknown[] = Array.isArray(projectSettings?.packages)
-      ? projectSettings.packages
-      : [];
-    const globalPackages: unknown[] = Array.isArray(globalSettings?.packages)
-      ? globalSettings.packages
-      : [];
+    const [globalPackages = [], projectPackages = []] = [
+      globalSettings,
+      projectSettings,
+    ].map((settings) => {
+      const packages: unknown[] = Array.isArray(settings?.packages)
+        ? settings.packages
+        : [];
+      return packages.filter(
+        (entry) =>
+          !(
+            isMcpRecord(entry) &&
+            Array.isArray(entry.extensions) &&
+            entry.extensions.length === 0
+          ),
+      );
+    });
     const projectAdapter = projectPackages.find((entry) =>
       /^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(piPackageSource(entry) ?? ""),
     );
     const effectivePackages =
-      projectAdapter === undefined ? globalPackages : [projectAdapter];
-    const usesProjectPackages = projectAdapter !== undefined;
+      trust.trusted && projectAdapter !== undefined
+        ? [projectAdapter]
+        : globalPackages;
     const adapterRegistered = effectivePackages.some((entry) =>
       /^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(piPackageSource(entry) ?? ""),
     );
     if (!adapterRegistered) {
-      // Pi 0.99.0 introduced native MCP. A persisted runtime version or an
-      // explicit built-in selector is evidence; an installed package is not.
-      const version = globalSettings?.lastChangelogVersion;
-      const match =
-        typeof version === "string"
-          ? /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
-          : null;
-      const modern =
-        match !== null && (Number(match[1]) > 0 || Number(match[2]) >= 99);
+      // Only an explicit active built-in selector proves native MCP here.
+      // Persisted changelog state does not identify the running Pi version.
       if (nativeEnabled === false)
         return unknown("Pi's built-in MCP extension is disabled");
-      if (!modern && nativeEnabled !== true)
+      if (nativeEnabled !== true) {
+        if (!trust.trusted && projectAdapter !== undefined)
+          return {
+            ready: false,
+            mode: "legacy",
+            diagnostic: trust.diagnostic,
+            evidence,
+          };
         return unknown(
           "Pi MCP mode is unverified; inspect the active Pi version and /mcp implementation first",
         );
-      await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
-      evidence.trustStore = await readRegularFile(
-        trustStorePath,
-        "Pi project trust store",
-      );
-      const trust = inspectPiProjectTrust(
-        targetDir,
-        evidence.trustStore,
-        globalSettings,
-      );
+      }
       return trust.trusted
         ? { ready: true, mode: "native", evidence }
         : {
@@ -743,29 +764,6 @@ async function inspectPiMcpAdapter(
       return missing(
         "Pi MCP support requires pi-mcp-adapter to be registered with Pi (pi install npm:pi-mcp-adapter).",
       );
-    }
-    if (usesProjectPackages) {
-      await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
-      evidence.trustStore = await readRegularFile(
-        trustStorePath,
-        "Pi project trust store",
-      );
-      const trust = inspectPiProjectTrust(
-        targetDir,
-        evidence.trustStore,
-        globalSettings,
-      );
-      if (!trust.trusted) {
-        return {
-          ready: false,
-          mode: "legacy",
-          diagnostic: trust.diagnostic ?? {
-            code: "MCP_PI_PROJECT_UNTRUSTED",
-            message: "Pi project-local MCP packages are not trusted",
-          },
-          evidence,
-        };
-      }
     }
     return { ready: true, mode: "legacy", evidence };
   } catch (error) {

@@ -298,6 +298,110 @@ test("Pi retains a globally registered adapter when project packages are empty",
   expect(preview.configPath).toBe(path.join(data.targetDir, ".mcp.json"));
 });
 
+test("Pi ignores adapter registrations with no enabled extensions", async () => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await installMockPiAdapter(agentDir);
+  const settingsPath = path.join(agentDir, "settings.json");
+  const disabled = { source: "npm:pi-mcp-adapter", extensions: [] };
+  const options = {
+    schemaDir: data.schemaDir,
+    targetDir: data.targetDir,
+    host: "pi" as const,
+    providerName: "inspo",
+  };
+  await withPiAgentDir(agentDir, async () => {
+    await writeFile(settingsPath, JSON.stringify({ packages: [disabled] }));
+    const unknown = await previewMcpInstall(options);
+    expect(unknown.diagnostic?.code).toBe("MCP_PI_ADAPTER_UNKNOWN");
+    expect(unknown.configPath).toBeNull();
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        packages: [disabled],
+        extensions: ["builtin:mcp"],
+        defaultProjectTrust: "always",
+      }),
+    );
+    expect((await previewMcpInstall(options)).configPath).toBe(
+      path.join(data.targetDir, ".pi/mcp.json"),
+    );
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        packages: ["npm:pi-mcp-adapter"],
+        defaultProjectTrust: "always",
+      }),
+    );
+    await mkdir(path.join(data.targetDir, ".pi"));
+    await writeFile(
+      path.join(data.targetDir, ".pi/settings.json"),
+      JSON.stringify({ packages: [disabled] }),
+    );
+    const legacy = await previewMcpInstall(options);
+    expect(legacy.installMode).toBe("config");
+    expect(legacy.configPath).toBe(path.join(data.targetDir, ".mcp.json"));
+  });
+});
+
+test("Pi excludes untrusted project extensions from the active global mode", async () => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await installMockPiAdapter(agentDir);
+  const projectPiDir = path.join(data.targetDir, ".pi");
+  await mkdir(path.join(projectPiDir, "extensions"), { recursive: true });
+  await writeFile(
+    path.join(projectPiDir, "extensions/custom.ts"),
+    'pi.registerCommand("mcp", {});',
+  );
+  const settingsPath = path.join(projectPiDir, "settings.json");
+  const options = {
+    schemaDir: data.schemaDir,
+    targetDir: data.targetDir,
+    host: "pi" as const,
+    providerName: "inspo",
+  };
+  await withPiAgentDir(agentDir, async () => {
+    for (const settings of [
+      {},
+      { extensions: ["./custom.ts"] },
+      { packages: ["npm:custom-mcp"] },
+      { extensions: ["builtin:mcp"], packages: ["npm:pi-mcp-adapter"] },
+    ]) {
+      await writeFile(settingsPath, JSON.stringify(settings));
+      const preview = await previewMcpInstall(options);
+      expect(preview.installMode).toBe("config");
+      expect(preview.configPath).toBe(path.join(data.targetDir, ".mcp.json"));
+    }
+    await writeFile(
+      settingsPath,
+      JSON.stringify({ extensions: ["./custom.ts"] }),
+    );
+    await withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await writeFile(
+              path.join(agentDir, "trust.json"),
+              JSON.stringify({ [data.targetDir]: true }),
+            );
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+    });
+    expect((await previewMcpInstall(options)).diagnostic?.code).toBe(
+      "MCP_PI_ADAPTER_UNKNOWN",
+    );
+    await expect(
+      readFile(path.join(data.targetDir, ".mcp.json")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
 test("Pi preserves the verified legacy adapter and its project trust guard", async () => {
   const original =
     JSON.stringify(
@@ -666,7 +770,7 @@ test("native Pi installs into .pi/mcp.json without an adapter or root config mig
   await writeFile(
     path.join(agentDir, "settings.json"),
     JSON.stringify({
-      lastChangelogVersion: "1.4.0",
+      extensions: ["builtin:mcp"],
       defaultProjectTrust: "always",
     }),
   );
@@ -718,7 +822,7 @@ test("native Pi requires project trust and ignores an unregistered installed ada
   await installMockPiAdapter(agentDir);
   await writeFile(
     path.join(agentDir, "settings.json"),
-    JSON.stringify({ lastChangelogVersion: "1.4.0", packages: [] }),
+    JSON.stringify({ extensions: ["builtin:mcp"], packages: [] }),
   );
   await withPiAgentDir(agentDir, async () => {
     const options = {
@@ -757,13 +861,15 @@ test("Pi refuses unknown modes and custom MCP extensions before approval", async
   for (const settings of [
     {},
     { lastChangelogVersion: "0.98.0" },
+    { lastChangelogVersion: "1.4.0" },
+    { lastChangelogVersion: "99.0.0" },
     { lastChangelogVersion: "1.4.0", extensions: ["-builtin:mcp"] },
     { lastChangelogVersion: "1.4.0", extensions: ["!builtin:mcp"] },
     { lastChangelogVersion: "1.4.0", extensions: ["!builtin:*"] },
     { lastChangelogVersion: "1.4.0", extensions: ["./custom-mcp.ts"] },
     { lastChangelogVersion: "1.4.0", packages: ["npm:custom-mcp"] },
     {
-      lastChangelogVersion: "1.4.0",
+      extensions: ["builtin:mcp"],
       packages: ["npm:innocent-name-with-command-override"],
     },
   ]) {
@@ -801,6 +907,62 @@ test("Pi refuses unknown modes and custom MCP extensions before approval", async
   }
 });
 
+test("Pi honors global builtin exclusions and explicit project overrides", async () => {
+  for (const selectors of [
+    { global: ["-builtin:mcp", "+builtin:mcp"], project: [] },
+    { global: ["-builtin:mcp"], project: ["builtin:mcp"] },
+  ]) {
+    const data = await fixture();
+    const agentDir = path.join(data.root, "pi-agent");
+    await mkdir(agentDir);
+    await writeFile(
+      path.join(agentDir, "settings.json"),
+      JSON.stringify({
+        extensions: selectors.global,
+        defaultProjectTrust: "always",
+      }),
+    );
+    await mkdir(path.join(data.targetDir, ".pi"));
+    const projectSettingsPath = path.join(data.targetDir, ".pi/settings.json");
+    await writeFile(
+      projectSettingsPath,
+      JSON.stringify({ extensions: selectors.project }),
+    );
+    await withPiAgentDir(agentDir, async () => {
+      const options = {
+        schemaDir: data.schemaDir,
+        targetDir: data.targetDir,
+        host: "pi" as const,
+        providerName: "inspo",
+      };
+      expect((await previewMcpInstall(options)).diagnostic?.code).toBe(
+        "MCP_PI_ADAPTER_UNKNOWN",
+      );
+      let approvals = 0;
+      await withTTY(true, async () => {
+        await expect(
+          installMcpProvider({
+            ...options,
+            approve: () => {
+              approvals++;
+              return true;
+            },
+          }),
+        ).rejects.toMatchObject({ code: "MCP_PI_ADAPTER_UNKNOWN" });
+      });
+      expect(approvals).toBe(0);
+      await expect(
+        readFile(path.join(data.targetDir, ".pi/mcp.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await writeFile(
+        projectSettingsPath,
+        JSON.stringify({ extensions: ["+builtin:mcp"] }),
+      );
+      expect((await previewMcpInstall(options)).installMode).toBe("config");
+    });
+  }
+});
+
 test("Pi detects auto-loaded extensions and mode changes during approval", async () => {
   const data = await fixture();
   const agentDir = path.join(data.root, "pi-agent");
@@ -829,7 +991,7 @@ test("Pi detects auto-loaded extensions and mode changes during approval", async
             await writeFile(
               settingsPath,
               JSON.stringify({
-                extensions: ["-builtin:mcp"],
+                lastChangelogVersion: "99.0.0",
                 defaultProjectTrust: "always",
               }),
             );
@@ -905,7 +1067,7 @@ test("Pi legacy entrypoint and native trust changes invalidate approval", async 
       await writeFile(
         path.join(agentDir, "settings.json"),
         JSON.stringify({
-          lastChangelogVersion: "1.4.0",
+          extensions: ["builtin:mcp"],
           defaultProjectTrust: "always",
         }),
       );
