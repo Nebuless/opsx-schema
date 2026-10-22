@@ -524,6 +524,7 @@ async function inspectPiMcpAdapter(
   try {
     let globalSettings: McpRecord | null = null;
     let projectSettings: McpRecord | null = null;
+    let trust: ReturnType<typeof inspectPiProjectTrust> = { trusted: false };
     const unknown = (message: string): PiAdapterReadiness => ({
       ready: false,
       mode: "unknown",
@@ -537,6 +538,19 @@ async function inspectPiMcpAdapter(
         "Pi package settings",
       );
       evidence.settings.push({ path: settingsPath, snapshot });
+      if (index === 1) {
+        await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
+        evidence.trustStore = await readRegularFile(
+          trustStorePath,
+          "Pi project trust store",
+        );
+        trust = inspectPiProjectTrust(
+          targetDir,
+          evidence.trustStore,
+          globalSettings,
+        );
+        if (!trust.trusted) continue;
+      }
       if (!snapshot) continue;
       let settings: McpRecord;
       try {
@@ -552,16 +566,6 @@ async function inspectPiMcpAdapter(
       if (index === 0) globalSettings = settings;
       else projectSettings = settings;
     }
-    await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
-    evidence.trustStore = await readRegularFile(
-      trustStorePath,
-      "Pi project trust store",
-    );
-    const trust = inspectPiProjectTrust(
-      targetDir,
-      evidence.trustStore,
-      globalSettings,
-    );
     let nativeEnabled: boolean | undefined;
     for (const settings of trust.trusted
       ? [globalSettings, projectSettings]
@@ -675,7 +679,7 @@ async function inspectPiMcpAdapter(
       if (nativeEnabled === false)
         return unknown("Pi's built-in MCP extension is disabled");
       if (nativeEnabled !== true) {
-        if (!trust.trusted && projectAdapter !== undefined)
+        if (!trust.trusted && evidence.settings[1]?.snapshot)
           return {
             ready: false,
             mode: "legacy",
