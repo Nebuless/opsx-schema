@@ -50,7 +50,7 @@ Schemas and profiles:
   schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle default|recommended|all] [--migrate <change> ...] [--apply-token <token>]
   schemas bundled [name]             List or inspect bundled schema assets (works outside projects)
   schemas install <bundled-schema-name> --project <root> [--as <distinct-name>] [--apply-token <token>]
-    Install packaged schema files only; does not activate the project default or install skills/adapters.
+    Preview and apply packaged schema files and required skills; does not activate the project default or install adapters/MCP providers.
   schemas validate [name]            Validate a schema available to OpenSpec
 
 Skills (profile selects named agent; bundle selects declared skill tier):
@@ -67,7 +67,7 @@ Skills (profile selects named agent; bundle selects declared skill tier):
 MCP providers:
   mcp list [--schema <name>] [--target-dir <dir>]
   mcp inspect <provider> [--schema <name>] [--target-dir <dir>]
-  mcp install <provider> --host atomic|omp|opencode|pi|senpi [--schema <name>] [--target-dir <dir>] [--apply-token <token>]
+  mcp install <provider> --host atomic|omp|opencode|pi|senpi|omo [--schema <name>] [--target-dir <dir>] [--apply-token <token>]
 
 Compound adapters:
   adapters inspect <host> --scope project [--schema <name>]
