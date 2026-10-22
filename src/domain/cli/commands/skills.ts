@@ -404,8 +404,8 @@ export async function commandSkills(
         target: {
           root,
           schema: name,
-          profiles: selectedProfiles,
-          skillHosts: selectedHosts,
+          profiles: plan.request.profiles,
+          skillHosts: plan.request.skillHosts,
         },
         result: await withProjectMutationLock(root, () =>
           applySkillInstall(plan),
@@ -417,12 +417,12 @@ export async function commandSkills(
       target: {
         root,
         schema: name,
-        profiles: selectedProfiles,
-        skillHosts: selectedHosts,
+        profiles: plan.request.profiles,
+        skillHosts: plan.request.skillHosts,
       },
       plan,
       confirmation: {
-        exactTarget: `${root} skills for profiles ${selectedProfiles.join(", ") || "none"}; hosts ${selectedHosts.join(", ") || "none"}`,
+        exactTarget: `${root} skills for profiles ${plan.request.profiles.join(", ") || "none"}; hosts ${plan.request.skillHosts.join(", ") || "none"}`,
         token,
       },
     };

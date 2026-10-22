@@ -61,7 +61,7 @@ export interface CreatePreview {
   goal?: string;
   command: string[];
   association: ChangeSelectionAssociation;
-  associationSource: "explicit" | "switch" | "no-skills";
+  associationSource: "explicit" | "switch" | "default" | "no-skills";
   associationEvidence: string | null;
 }
 export interface CreateReceipt {
@@ -184,7 +184,7 @@ async function verifiedSelection(
   }
   return {
     association,
-    source: explicit ? "explicit" : "switch",
+    source: explicit ? "explicit" : inherited ? "switch" : "default",
     evidence: plan.inputDigest,
   };
 }

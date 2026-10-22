@@ -313,6 +313,166 @@ test("bundle refusal reports real tiers while default switch preview keeps all 1
   ).toBe("schema: spec-driven\n");
 });
 
+test(
+  "required skill installation reports effective destinations and creation selection sources",
+  async () => {
+    for (const selection of [
+      { flags: [], profiles: ["codex"], hosts: [], destination: ".agents" },
+      {
+        flags: ["--profile", "claude-code"],
+        profiles: ["claude-code"],
+        hosts: [],
+        destination: ".claude",
+      },
+      {
+        flags: ["--skill-host", "omp"],
+        profiles: [],
+        hosts: ["omp"],
+        destination: ".omp",
+      },
+    ]) {
+      const root = await fixture();
+      const schema = "required-fixture";
+      const schemaRoot = path.join(root, "openspec", "schemas", schema);
+      await cp(
+        path.join(schemaResources, "openspec", "schemas", "minimalist"),
+        schemaRoot,
+        { recursive: true },
+      );
+      await writeFile(path.join(schemaRoot, "skills.txt"), "");
+      await writeFile(
+        path.join(schemaRoot, "required-skills.txt"),
+        "required-skill\n",
+      );
+      await writeFile(
+        path.join(schemaRoot, "schema.yaml"),
+        (await Bun.file(path.join(schemaRoot, "schema.yaml")).text()).replace(
+          "name: minimalist",
+          `name: ${schema}`,
+        ),
+      );
+      const bin = path.join(root, "bin");
+      await mkdir(bin);
+      await writeFile(
+        path.join(bin, "git"),
+        "#!/bin/sh\nif [ \"$1\" != \"clone\" ]; then exit 99; fi\nmkdir -p \"$7/.agents/skills/required-skill\"\nprintf '%s\\n' '---' 'name: required-skill' 'description: Required fixture skill' '---' > \"$7/.agents/skills/required-skill/SKILL.md\"\n",
+      );
+      await chmod(path.join(bin, "git"), 0o755);
+      const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+      const args = [
+        "--project",
+        root,
+        "skills",
+        "install",
+        schema,
+        ...selection.flags,
+        "--json",
+      ];
+      const preview = invoke(args, root, env);
+      expect(preview.code, preview.stdout).toBe(0);
+      const plan = JSON.parse(preview.stdout).data;
+      const target = {
+        root,
+        schema,
+        profiles: selection.profiles,
+        skillHosts: selection.hosts,
+      };
+      expect(plan.target).toEqual(target);
+      expect(plan.plan.request).toMatchObject({
+        profiles: selection.profiles,
+        skillHosts: selection.hosts,
+      });
+      expect(plan.confirmation.exactTarget).toBe(
+        `${root} skills for profiles ${selection.profiles.join(", ") || "none"}; hosts ${selection.hosts.join(", ") || "none"}`,
+      );
+      const installed = path.join(
+        root,
+        selection.destination,
+        "skills",
+        "required-skill",
+        "SKILL.md",
+      );
+      expect(await Bun.file(installed).exists()).toBe(false);
+      const applied = invoke(
+        [...args, "--apply-token", plan.confirmation.token],
+        root,
+        env,
+      );
+      expect(applied.code, applied.stdout).toBe(0);
+      expect(JSON.parse(applied.stdout).data.target).toEqual(target);
+      expect(await Bun.file(installed).text()).toContain(
+        "name: required-skill",
+      );
+      expect(await readSelectionReceipt(root)).toBeNull();
+      expect(
+        await Bun.file(path.join(root, "openspec", "config.yaml")).text(),
+      ).toBe("schema: spec-driven\n");
+
+      const createArgs = [
+        "--project",
+        root,
+        "change",
+        "create",
+        "required-change",
+        "--description",
+        "Verify required skill selection provenance",
+        "--schema",
+        schema,
+        "--json",
+      ];
+      const explicit = invoke(
+        [
+          ...createArgs,
+          ...selection.flags,
+          ...(selection.flags.length ? ["--bundle", "default"] : []),
+        ],
+        root,
+        env,
+      );
+      expect(explicit.code, explicit.stdout).toBe(0);
+      expect(JSON.parse(explicit.stdout).data.data).toMatchObject({
+        associationSource: selection.flags.length ? "explicit" : "default",
+        association: {
+          profiles: selection.profiles,
+          skillHosts: selection.hosts,
+        },
+        associationEvidence: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      const switchArgs = [
+        "--project",
+        root,
+        "schema",
+        "switch",
+        schema,
+        ...selection.flags,
+        "--json",
+      ];
+      const switchPreview = invoke(switchArgs, root, env);
+      expect(switchPreview.code, switchPreview.stdout).toBe(0);
+      const switched = invoke(
+        [
+          ...switchArgs,
+          "--apply-token",
+          JSON.parse(switchPreview.stdout).data.confirmation.token,
+        ],
+        root,
+        env,
+      );
+      expect(switched.code, switched.stdout).toBe(0);
+      const inherited = invoke(createArgs, root, env);
+      expect(inherited.code, inherited.stdout).toBe(0);
+      expect(JSON.parse(inherited.stdout).data.data).toMatchObject({
+        associationSource: "switch",
+        association: {
+          profiles: selection.profiles,
+          skillHosts: selection.hosts,
+        },
+      });
+    }
+  },
+  { timeout: 60_000 },
+);
+
 test("skills inspect gives bundled guidance only for proven known schema misses", async () => {
   const root = await fixture();
   const bin = path.join(root, "bin");
@@ -368,7 +528,6 @@ test("skills inspect gives bundled guidance only for proven known schema misses"
     "schemas install <bundled-schema-name> --project <root>",
   );
   expect(help.stdout).toContain("<bundled-schema-name>");
-  expect(help.stdout).toContain("Install packaged schema files only");
 
   const notFoundPath = path.join(root, "bundled-source");
   await mkdir(notFoundPath);

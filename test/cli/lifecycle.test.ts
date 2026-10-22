@@ -214,6 +214,10 @@ test(
     expect(preview.ok && preview.phase).toBe("preview");
     if (!preview.ok || preview.phase !== "preview")
       throw new Error("Expected creation preview");
+    expect(preview.data).toMatchObject({
+      associationSource: "no-skills",
+      associationEvidence: null,
+    });
     expect(preview.confirmation?.exactTarget).toContain("cli-smoke");
     await expect(changeDirectory(root, "cli-smoke")).rejects.toThrow();
 
