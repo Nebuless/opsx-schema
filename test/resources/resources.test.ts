@@ -9,12 +9,16 @@ import {
   rm,
   symlink,
   writeFile,
+  chmod,
+  rename,
+  stat,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   applySkillDisable,
   applySkillInstall,
+  withSkillInstall,
   assertSkillBundleDeclared,
   doctorSkills,
   discoverSkillInstallHosts,
@@ -112,6 +116,162 @@ test("bare and source-qualified skill declarations resolve to complete source fo
     expect.objectContaining({ code: "RESOURCE_MANIFEST_INVALID" }),
   );
 });
+
+test("dependent activation rollback restores prior ownership bytes and preserves skill noops", async () => {
+  const f = await fixture("existing\n");
+  await addSkill(f.sourceRoot, "existing");
+  const request = {
+    projectRoot: f.projectRoot,
+    schemaRoot: f.schemaRoot,
+    profiles: ["codex"],
+  };
+  await applySkillInstall(
+    await previewSkillInstall(request, f.options),
+    f.options,
+  );
+  const ownership = path.join(
+    f.projectRoot,
+    ".openspec/opsx-schema/managed-resources.json",
+  );
+  await chmod(ownership, 0o640);
+  const before = await readFile(ownership, "utf8");
+  await writeFile(
+    path.join(f.schemaRoot, "skills.txt"),
+    "existing\nnew-skill\n",
+  );
+  await addSkill(f.sourceRoot, "new-skill");
+  const plan = await previewSkillInstall(request, f.options);
+  const failure = new Error("schema activation failed");
+  await expect(
+    withSkillInstall(
+      plan,
+      async (result) => {
+        expect(result.installedTargets).toEqual([".agents/skills/new-skill"]);
+        expect(result.unchangedTargets).toEqual([".agents/skills/existing"]);
+        throw failure;
+      },
+      f.options,
+    ),
+  ).rejects.toBe(failure);
+  expect(await readdir(path.join(f.projectRoot, ".agents/skills"))).toEqual([
+    "existing",
+  ]);
+  expect(await readFile(ownership, "utf8")).toBe(before);
+  expect((await stat(ownership)).mode & 0o777).toBe(0o640);
+  expect(
+    await readFile(
+      path.join(f.projectRoot, ".agents/skills/existing/SKILL.md"),
+      "utf8",
+    ),
+  ).toBe("# existing\n");
+  const noop = await previewSkillInstall(
+    { ...request, schemaRoot: f.schemaRoot },
+    f.options,
+  );
+  await withSkillInstall(
+    noop,
+    async (result) => {
+      expect(result.installedTargets).toEqual([".agents/skills/new-skill"]);
+      return result;
+    },
+    f.options,
+  );
+  const repeated = await previewSkillInstall(request, f.options);
+  const intactOwnership = await readFile(ownership, "utf8");
+  await expect(
+    withSkillInstall(
+      repeated,
+      async (result) => {
+        expect(result.applied).toBe(false);
+        throw failure;
+      },
+      f.options,
+    ),
+  ).rejects.toBe(failure);
+  expect(await readFile(ownership, "utf8")).toBe(intactOwnership);
+  expect(
+    await readdir(path.join(f.projectRoot, ".agents/skills")),
+  ).toHaveLength(2);
+});
+
+for (const mutation of [
+  "bytes",
+  "mode",
+  "ownership",
+  "replacement",
+  "route",
+] as const) {
+  test(`unsafe dependent rollback preserves external ${mutation} edits with partial-state evidence`, async () => {
+    const f = await fixture("new-skill\n");
+    await addSkill(f.sourceRoot, "new-skill");
+    const plan = await previewSkillInstall(
+      {
+        projectRoot: f.projectRoot,
+        schemaRoot: f.schemaRoot,
+        profiles: ["codex"],
+      },
+      f.options,
+    );
+    const skill = path.join(f.projectRoot, ".agents/skills/new-skill/SKILL.md");
+    const ownership = path.join(
+      f.projectRoot,
+      ".openspec/opsx-schema/managed-resources.json",
+    );
+    let ownedRaw = "";
+    await expect(
+      withSkillInstall(
+        plan,
+        async (result) => {
+          expect(result.installedTargets).toEqual([".agents/skills/new-skill"]);
+          ownedRaw = await readFile(ownership, "utf8");
+          if (mutation === "bytes") await writeFile(skill, "external edit\n");
+          if (mutation === "mode") await chmod(skill, 0o600);
+          if (mutation === "ownership")
+            await writeFile(ownership, "external ownership\n");
+          if (mutation === "replacement") {
+            await writeFile(`${ownership}.external`, ownedRaw);
+            await chmod(
+              `${ownership}.external`,
+              (await stat(ownership)).mode & 0o777,
+            );
+            await rename(`${ownership}.external`, ownership);
+          }
+          if (mutation === "route") {
+            await rename(
+              path.join(f.projectRoot, ".agents"),
+              path.join(f.projectRoot, "external-agent"),
+            );
+            await symlink(
+              "external-agent",
+              path.join(f.projectRoot, ".agents"),
+            );
+          }
+          throw new Error("schema target changed after skill activation");
+        },
+        f.options,
+      ),
+    ).rejects.toMatchObject({
+      code: "RESOURCE_PARTIAL",
+      details: {
+        installedTargets: [".agents/skills/new-skill"],
+        partialPaths: expect.arrayContaining([ownership]),
+        ownershipPath: ownership,
+        cause: {
+          code: null,
+          message: "schema target changed after skill activation",
+        },
+      },
+    });
+    expect(await readFile(skill, "utf8")).toBe(
+      mutation === "bytes" ? "external edit\n" : "# new-skill\n",
+    );
+    if (mutation === "mode")
+      expect((await stat(skill)).mode & 0o777).toBe(0o600);
+    expect(await readFile(ownership, "utf8")).toBe(
+      mutation === "ownership" ? "external ownership\n" : ownedRaw,
+    );
+  });
+}
 
 test("source declarations retain immutable revisions and reject unsafe refs", () => {
   const revision = "aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f";

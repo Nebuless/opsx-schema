@@ -483,6 +483,7 @@ interface CreatedEntry {
   readonly directory: boolean;
   readonly dev: number;
   readonly ino: number;
+  readonly mode: number;
   readonly digest?: string;
 }
 
@@ -2719,6 +2720,7 @@ async function writeOwnership(
   root: string,
   ownership: OwnershipData,
   expectedRaw: string | null,
+  writes?: CreatedEntry[],
 ): Promise<string> {
   await ensureDirectories(root, ".openspec/opsx-schema");
   const file = path.join(root, OWNERSHIP_FILE);
@@ -2743,6 +2745,7 @@ async function writeOwnership(
     `.managed-resources-${randomUUID()}.tmp`,
   );
   const handle = await open(temp, "wx", 0o600);
+  const identity = await handle.stat();
   try {
     await handle.writeFile(nextRaw, "utf8");
     await handle.sync();
@@ -2769,6 +2772,14 @@ async function writeOwnership(
     } else {
       await rename(temp, file);
     }
+    writes?.push({
+      path: file,
+      directory: false,
+      dev: identity.dev,
+      ino: identity.ino,
+      mode: identity.mode,
+      digest: sha256(nextRaw),
+    });
   } catch (error) {
     await unlink(temp).catch((cleanupError) => {
       if (!isMissing(cleanupError)) throw cleanupError;
@@ -2803,6 +2814,7 @@ async function copyDirectoryContents(
         directory: true,
         dev: createdInfo.dev,
         ino: createdInfo.ino,
+        mode: sourceInfo.mode,
       });
       await copyDirectoryContents(sourcePath, destinationPath, created);
       await chmod(destinationPath, sourceInfo.mode & 0o777);
@@ -2815,6 +2827,7 @@ async function copyDirectoryContents(
         directory: false,
         dev: createdInfo.dev,
         ino: createdInfo.ino,
+        mode: createdInfo.mode,
         digest: sha256(await readFile(destinationPath)),
       });
     } else {
@@ -2828,28 +2841,23 @@ async function copyDirectoryContents(
 
 async function rollbackCreated(
   created: readonly CreatedEntry[],
+  root: string,
 ): Promise<string[]> {
   const remaining: string[] = [];
   for (const entry of [...created].reverse()) {
     try {
-      const info = await lstatOrNull(entry.path);
-      if (!info) continue;
-      if (
-        info.isSymbolicLink() ||
-        info.dev !== entry.dev ||
-        info.ino !== entry.ino ||
-        info.isDirectory() !== entry.directory
-      ) {
+      const state = await stateAt(
+        root,
+        path.relative(root, entry.path).split(path.sep).join("/"),
+      );
+      if (state.kind === "missing") continue;
+      if (!(await matchesCreated(root, entry))) {
         remaining.push(entry.path);
         continue;
       }
       if (entry.directory) {
         await rmdir(entry.path);
       } else {
-        if (sha256(await readFile(entry.path)) !== entry.digest) {
-          remaining.push(entry.path);
-          continue;
-        }
         await unlink(entry.path);
       }
     } catch {
@@ -2857,6 +2865,24 @@ async function rollbackCreated(
     }
   }
   return remaining;
+}
+
+async function matchesCreated(
+  root: string,
+  entry: CreatedEntry,
+): Promise<boolean> {
+  const state = await stateAt(
+    root,
+    path.relative(root, entry.path).split(path.sep).join("/"),
+  );
+  if (state.kind !== (entry.directory ? "directory" : "file")) return false;
+  const info = await lstat(entry.path);
+  return (
+    info.dev === entry.dev &&
+    info.ino === entry.ino &&
+    info.mode === entry.mode &&
+    (entry.directory || sha256(await readFile(entry.path)) === entry.digest)
+  );
 }
 
 async function installTarget(
@@ -2889,6 +2915,7 @@ async function installTarget(
       directory: true,
       dev: rootInfo.dev,
       ino: rootInfo.ino,
+      mode: sourceInfo.mode,
     },
   ];
   try {
@@ -2904,7 +2931,7 @@ async function installTarget(
         "Source bytes changed while installing " + target.relativeTarget,
       );
   } catch (error) {
-    const leftovers = await rollbackCreated(created);
+    const leftovers = await rollbackCreated(created, root);
     if (leftovers.length)
       fail(
         "RESOURCE_PARTIAL",
@@ -2922,6 +2949,15 @@ export async function applySkillInstall(
   plan: SkillInstallPlan,
   options: ResourceRuntimeOptions = {},
 ): Promise<SkillInstallResult> {
+  return withSkillInstall(plan, async (result) => result, options);
+}
+
+/** Keep dependent activation inside the resource lock and roll back exact new writes on failure. */
+export async function withSkillInstall<T>(
+  plan: SkillInstallPlan,
+  activate: (result: SkillInstallResult) => Promise<T>,
+  options: ResourceRuntimeOptions = {},
+): Promise<T> {
   if (plan.kind !== "skill-install" || plan.version !== 1)
     fail("RESOURCE_PLAN_INVALID", "Unsupported skill installation plan.");
   let currentProfiles: { profiles: AgentProfile[]; digest: string };
@@ -2980,12 +3016,12 @@ export async function applySkillInstall(
       .filter(({ target }) => target.action === "noop")
       .map(({ target }) => target.relativeTarget);
     if (installTargets.every(({ target }) => target.action === "noop")) {
-      return {
+      return await activate({
         applied: false,
         installedTargets: [],
         unchangedTargets,
         inputDigest: plan.inputDigest,
-      };
+      });
     }
     release = await acquireLock(prepared.root);
     const locked = await buildInstallState(prepared.request, prepared.sources);
@@ -3005,6 +3041,12 @@ export async function applySkillInstall(
       resources: { ...locked.ownership.data.resources },
     };
     let ownershipRaw = locked.ownership.raw;
+    const ownershipMode =
+      ownershipRaw === null
+        ? 0o600
+        : (await lstat(path.join(prepared.root, OWNERSHIP_FILE))).mode & 0o777;
+    const ownershipWrites: CreatedEntry[] = [];
+    const createdEntries: CreatedEntry[] = [];
     const lockedTargets = [
       ...locked.plan.targets.map((target) => ({
         target,
@@ -3049,10 +3091,14 @@ export async function applySkillInstall(
           prepared.root,
           ownershipData,
           ownershipRaw,
+          ownershipWrites,
         );
+        createdEntries.push(...created);
         installedTargets.push(target.relativeTarget);
       } catch (error) {
-        const leftovers = created ? await rollbackCreated(created) : [];
+        const leftovers = created
+          ? await rollbackCreated(created, prepared.root)
+          : [];
         if (installedTargets.length) {
           fail(
             "RESOURCE_PARTIAL",
@@ -3076,12 +3122,55 @@ export async function applySkillInstall(
         throw error;
       }
     }
-    return {
+    const result: SkillInstallResult = {
       applied: installedTargets.length > 0,
       installedTargets,
       unchangedTargets,
       inputDigest: plan.inputDigest,
     };
+    try {
+      return await activate(result);
+    } catch (error) {
+      const ownershipWrite = ownershipWrites.at(-1);
+      let partialPaths = createdEntries.map((entry) => entry.path);
+      try {
+        if (ownershipWrite) {
+          if (!(await matchesCreated(prepared.root, ownershipWrite)))
+            fail(
+              "RESOURCE_STALE",
+              "Managed resource ownership changed before rollback.",
+            );
+          partialPaths = await rollbackCreated(createdEntries, prepared.root);
+          if (partialPaths.length === 0)
+            await replaceOwnershipRaw(
+              prepared.root,
+              locked.ownership.raw,
+              ownershipRaw,
+              { mode: ownershipMode, expected: ownershipWrite },
+            );
+          else partialPaths.push(ownershipWrite.path);
+        }
+      } catch {
+        partialPaths.push(path.join(prepared.root, OWNERSHIP_FILE));
+      }
+      if (partialPaths.length) {
+        const cause = {
+          code: error instanceof OpsxError ? error.code : null,
+          message: error instanceof Error ? error.message : String(error),
+        };
+        fail(
+          "RESOURCE_PARTIAL",
+          `Dependent activation failed after installing ${installedTargets.join(", ")}. Original failure: ${cause.code ? `${cause.code}: ` : ""}${cause.message} Rollback was unsafe or incomplete; inspect retained paths: ${[...new Set(partialPaths)].join(", ")}. Ownership record: ${path.join(prepared.root, OWNERSHIP_FILE)}.`,
+          {
+            installedTargets,
+            partialPaths: [...new Set(partialPaths)],
+            ownershipPath: path.join(prepared.root, OWNERSHIP_FILE),
+            cause,
+          },
+        );
+      }
+      throw error;
+    }
   } finally {
     if (release) await release();
     await prepared.cleanup();
@@ -4547,9 +4636,15 @@ async function replaceOwnershipRaw(
   root: string,
   nextRaw: string | null,
   expectedRaw: string | null,
+  rollback?: { readonly mode: number; readonly expected: CreatedEntry },
 ): Promise<void> {
   await ensureDirectories(root, ".openspec/opsx-schema");
   const file = path.join(root, OWNERSHIP_FILE);
+  if (rollback && !(await matchesCreated(root, rollback.expected)))
+    fail(
+      "RESOURCE_STALE",
+      "Managed resource ownership changed before rollback.",
+    );
   const current = await stateAt(root, OWNERSHIP_FILE);
   if (
     current.kind === "symlink" ||
@@ -4578,14 +4673,20 @@ async function replaceOwnershipRaw(
     path.dirname(file),
     `.managed-resources-${randomUUID()}.tmp`,
   );
-  const handle = await open(temporary, "wx", 0o600);
+  const handle = await open(temporary, "wx", rollback?.mode ?? 0o600);
   try {
+    if (rollback) await handle.chmod(rollback.mode);
     await handle.writeFile(nextRaw, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
   }
   try {
+    if (rollback && !(await matchesCreated(root, rollback.expected)))
+      fail(
+        "RESOURCE_STALE",
+        "Managed resource ownership changed during rollback.",
+      );
     const latest = await stateAt(root, OWNERSHIP_FILE);
     const latestRaw =
       latest.kind === "file" ? await readFile(file, "utf8") : null;
