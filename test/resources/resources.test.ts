@@ -18,6 +18,7 @@ import path from "node:path";
 import {
   applySkillDisable,
   applySkillInstall,
+  acquireResourceMutationLock,
   withSkillInstall,
   assertSkillBundleDeclared,
   doctorSkills,
@@ -115,6 +116,94 @@ test("bare and source-qualified skill declarations resolve to complete source fo
   expect(() => parseSkillsManifest("owner/repo packages/skill")).toThrow(
     expect.objectContaining({ code: "RESOURCE_MANIFEST_INVALID" }),
   );
+});
+
+test("all-noop skill activation refuses a held resource mutation lock", async () => {
+  const f = await fixture("existing\n");
+  await addSkill(f.sourceRoot, "existing");
+  const request = {
+    projectRoot: f.projectRoot,
+    schemaRoot: f.schemaRoot,
+    profiles: ["codex"],
+  };
+  await applySkillInstall(
+    await previewSkillInstall(request, f.options),
+    f.options,
+  );
+  const plan = await previewSkillInstall(request, f.options);
+  expect(plan.targets.map((target) => target.action)).toEqual(["noop"]);
+  const release = await acquireResourceMutationLock(f.projectRoot);
+  let activated = false;
+  try {
+    await expect(
+      withSkillInstall(
+        plan,
+        async (result) => {
+          activated = true;
+          return result;
+        },
+        f.options,
+      ),
+    ).rejects.toMatchObject({ code: "RESOURCE_LOCKED" });
+    expect(activated).toBe(false);
+  } finally {
+    await release();
+  }
+});
+
+test("successful all-noop activation retains its resource lock until the callback completes", async () => {
+  const f = await fixture("existing\n");
+  await addSkill(f.sourceRoot, "existing");
+  const request = {
+    projectRoot: f.projectRoot,
+    schemaRoot: f.schemaRoot,
+    profiles: ["codex"],
+  };
+  await applySkillInstall(
+    await previewSkillInstall(request, f.options),
+    f.options,
+  );
+  const plan = await previewSkillInstall(request, f.options);
+  expect(plan.targets.map((target) => target.action)).toEqual(["noop"]);
+  const ownership = path.join(
+    f.projectRoot,
+    ".openspec/opsx-schema/managed-resources.json",
+  );
+  const before = await readFile(ownership, "utf8");
+  const entered = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const activation = withSkillInstall(
+    plan,
+    async (result) => {
+      entered.resolve();
+      await finish.promise;
+      return result;
+    },
+    f.options,
+  );
+  try {
+    await Promise.race([
+      entered.promise,
+      activation.then(() => {
+        throw new Error("Activation completed before its callback entered.");
+      }),
+    ]);
+    await expect(
+      acquireResourceMutationLock(f.projectRoot),
+    ).rejects.toMatchObject({ code: "RESOURCE_LOCKED" });
+  } finally {
+    finish.resolve();
+    await activation;
+  }
+  expect(await activation).toEqual({
+    applied: false,
+    installedTargets: [],
+    unchangedTargets: [".agents/skills/existing"],
+    inputDigest: plan.inputDigest,
+  });
+  const release = await acquireResourceMutationLock(f.projectRoot);
+  await release();
+  expect(await readFile(ownership, "utf8")).toBe(before);
 });
 
 test("dependent activation rollback restores prior ownership bytes and preserves skill noops", async () => {
