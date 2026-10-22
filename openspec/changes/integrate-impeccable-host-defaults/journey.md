@@ -147,3 +147,76 @@ It confirmed both round 2 repairs and independently passed 58 focused tests
 with 476 assertions, whitespace checks, schema-copy parity, and real CLI help.
 Live MCP connectivity remains untested. The final aggregate gate, push,
 Macroscope thread reconciliation, and new-head required CI remain pending.
+
+Pushed the reviewed fix series through `11b91c7` to the existing PR branch only.
+All seven original GitHub review threads received substantive replies mapping
+their fixes to commits and regressions, then were resolved. An authoritative
+follow-up read returned no pending review and an empty unresolved-thread list.
+Macroscope's existing approvability comment still refers to the original three
+blocking findings; current-head review and required CI must be checked separately.
+
+Macroscope follow-up `4352789351` found one remaining trust-boundary case:
+malformed or non-object untrusted project settings were still parsed before
+trust and could hide a valid global adapter. Parent inspection confirmed it and
+dispatched the bounded parsing-order repair and deterministic regressions to the
+Pi fixer. This reopens that original finding; the earlier empty unresolved-thread
+read did not prove current-head correctness. The running aggregate gate covers
+the preceding code, so the new repair requires its own checks and fresh review.
+
+The preceding full `bun run check` completed with exit 0: 526 application tests
+with zero failures, two packed-distribution tests, Biome, pinned Qlty 0.651.0,
+TypeScript, resource checks, and all nine OpenSpec schema validations. It covers
+the round 2 implementation, not subsequent repairs. GitHub Codex on `11b91c7`
+then identified caller Git configuration leaking into pinned shell checkout and
+missing ownership aliases when a default codex target is reused by opencode.
+Both were independently inspected and dispatched to disjoint fixing subagents.
+Macroscope's new approvability summary requests human review for the change's
+scope, rather than citing the original three blocking correctness findings.
+
+The trust-parsing repair is committed as `f6f12db`. Parent inspection confirmed
+project settings remain safely snapshotted but are semantically parsed only
+after trust. Six malformed-input regressions failed before repair. The focused
+MCP run passed 23 tests with 297 assertions, including trusted refusal and stale
+settings/trust changes; TypeScript, scoped Biome, and whitespace checks passed.
+Strict change validation also passed after adding the new trust, shared-alias,
+and pinned-checkout scenarios. The latter two implementation repairs remain
+with their assigned subagents.
+
+Committed shell checkout isolation as `d06522f` after parent diff inspection.
+Checkout and revision inspection now use the clone/fetch isolated Git environment.
+Local source fixtures reproduced smudge execution before the fix and passed
+afterward for hostile HOME, global, inherited filter, and autocrlf settings,
+asserting exact pinned bytes and no filter execution. The installer tests, all
+resource checks and nine schema validations, ShellCheck 0.11.0, shell syntax,
+and whitespace checks passed. Aggregate formatting saw a concurrent unfinished
+shared-alias test edit; the owning fixer retains that file and will verify it.
+
+Committed the neutral default ownership repair as `7e08039` after parent diff
+inspection. Default installation records every declared profile at the shared
+`.agents/skills` destination while writing each physical skill once. Both new
+regressions failed before repair, including `RESOURCE_OWNERSHIP_INVALID` during
+re-pin. Resource/schema tests passed 42 tests and 253 assertions; focused re-pin
+passed two tests and 42 assertions. TypeScript, scoped Biome, and whitespace
+checks passed. Subsequent explicit alias noops preserve skill and ownership
+bytes, inodes, and modification times. Independent Codex round 4 and a fresh
+complete `bun run check` now cover all three new repairs. Earlier checklist
+approval and aggregate verification were reopened until these results return.
+
+The first final aggregate passed quality and types, then exposed a stale CLI
+expectation that defaults reported only codex. The new contract correctly
+reports codex and opencode. Parent inspected the failure and updated that
+machine-consumed expected profile list without weakening behavior assertions.
+The aggregate was stopped on that known failure and is not a passing result.
+The real CLI regression is rerun before a replacement aggregate.
+
+Independent Codex round 4 approved the full diff through `7e08039` plus pending
+OpenSpec artifacts and the corrected CLI expectation, with no actionable
+findings. It independently passed 48 focused tests and 522 assertions, hostile
+Git shell regressions, strict change validation, schema parity, and whitespace
+checks. Live MCP connectivity remains untested. The actual CLI expectation
+regression passed with 48 assertions and was committed as `3b59db2`; repository
+format/lint and TypeScript passed. Combined `biome check` additionally reported
+an existing import-order assist outside the repository's separate format/lint
+gate; no imports were changed. LSP diagnostics timed out, with TypeScript used
+as executable type evidence. A replacement aggregate now covers this final
+runtime state; it is pending and is not implied by the independent approval.
