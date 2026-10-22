@@ -338,6 +338,39 @@ test("Pi ignores adapter registrations with no enabled extensions", async () => 
       path.join(data.targetDir, ".pi/settings.json"),
       JSON.stringify({ packages: [disabled] }),
     );
+    const shadowed = await previewMcpInstall(options);
+    expect(shadowed.installMode).toBe("prerequisite-needed");
+    expect(shadowed.diagnostic?.code).toBe("MCP_PI_ADAPTER_UNKNOWN");
+    expect(shadowed.configPath).toBeNull();
+    let approvals = 0;
+    await withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: () => {
+            approvals++;
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_PI_ADAPTER_UNKNOWN" });
+    });
+    expect(approvals).toBe(0);
+    for (const configPath of [".mcp.json", ".pi/mcp.json"]) {
+      await expect(
+        readFile(path.join(data.targetDir, configPath)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    await writeFile(
+      path.join(data.targetDir, ".pi/settings.json"),
+      JSON.stringify({ packages: [disabled], extensions: ["builtin:mcp"] }),
+    );
+    const native = await previewMcpInstall(options);
+    expect(native.installMode).toBe("config");
+    expect(native.configPath).toBe(path.join(data.targetDir, ".pi/mcp.json"));
+    await writeFile(
+      path.join(agentDir, "trust.json"),
+      JSON.stringify({ [data.targetDir]: false }),
+    );
     const legacy = await previewMcpInstall(options);
     expect(legacy.installMode).toBe("config");
     expect(legacy.configPath).toBe(path.join(data.targetDir, ".mcp.json"));

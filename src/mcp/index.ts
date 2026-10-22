@@ -649,22 +649,23 @@ async function inspectPiMcpAdapter(
       const packages: unknown[] = Array.isArray(settings?.packages)
         ? settings.packages
         : [];
-      return packages.filter(
-        (entry) =>
-          !(
-            isMcpRecord(entry) &&
-            Array.isArray(entry.extensions) &&
-            entry.extensions.length === 0
-          ),
-      );
+      return packages;
     });
     const projectAdapter = projectPackages.find((entry) =>
       /^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(piPackageSource(entry) ?? ""),
     );
-    const effectivePackages =
+    const effectivePackages = (
       trust.trusted && projectAdapter !== undefined
         ? [projectAdapter]
-        : globalPackages;
+        : globalPackages
+    ).filter(
+      (entry) =>
+        !(
+          isMcpRecord(entry) &&
+          Array.isArray(entry.extensions) &&
+          entry.extensions.length === 0
+        ),
+    );
     const adapterRegistered = effectivePackages.some((entry) =>
       /^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(piPackageSource(entry) ?? ""),
     );
