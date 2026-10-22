@@ -1,5 +1,5 @@
-pbakaus/impeccable	.agents/skills/impeccable
-mattpocock/skills	skills/productivity/grill-me
-mattpocock/skills	skills/engineering/grill-with-docs
-mattpocock/skills	skills/productivity/grilling
-mattpocock/skills	skills/engineering/domain-modeling
+pbakaus/impeccable	.agents/skills/impeccable	aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f
+mattpocock/skills	skills/productivity/grill-me	74ca5fe077456a0b3b2f5310cf9430999fd0b5fd
+mattpocock/skills	skills/engineering/grill-with-docs	74ca5fe077456a0b3b2f5310cf9430999fd0b5fd
+mattpocock/skills	skills/productivity/grilling	74ca5fe077456a0b3b2f5310cf9430999fd0b5fd
+mattpocock/skills	skills/engineering/domain-modeling	74ca5fe077456a0b3b2f5310cf9430999fd0b5fd

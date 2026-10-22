@@ -4,6 +4,7 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   link,
   unlink,
@@ -15,7 +16,7 @@ import YAML, { isAlias, isMap, isScalar, isSeq } from "yaml";
 import { OpsxError } from "../domain/project.ts";
 import { isMcpRecord, type McpRecord } from "./guards.ts";
 
-export type McpHost = "atomic" | "omp" | "opencode" | "pi" | "senpi";
+export type McpHost = "atomic" | "omp" | "opencode" | "pi" | "senpi" | "omo";
 
 export type McpInstallMode = "config" | "guided-only" | "prerequisite-needed";
 
@@ -127,7 +128,7 @@ export interface McpInstallResult {
   preview: McpInstallPreview;
 }
 
-const HOSTS: McpHost[] = ["atomic", "omp", "opencode", "pi", "senpi"];
+const HOSTS: McpHost[] = ["atomic", "omp", "opencode", "pi", "senpi", "omo"];
 const HOST_INFO: McpHostInfo[] = [
   { host: "atomic", installMode: "config" },
   { host: "omp", installMode: "config" },
@@ -135,9 +136,10 @@ const HOST_INFO: McpHostInfo[] = [
   {
     host: "pi",
     installMode: "prerequisite-needed",
-    prerequisite: "pi-mcp-adapter",
+    prerequisite: "verified Pi MCP mode",
   },
   { host: "senpi", installMode: "config" },
+  { host: "omo", installMode: "config" },
 ];
 const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 
@@ -190,6 +192,7 @@ interface InstallPlan {
 interface PiAdapterEvidence {
   agentDir: string;
   settings: Array<{ path: string; snapshot: FileSnapshot | null }>;
+  extensions: string[];
   trustStorePath: string;
   trustStore: FileSnapshot | null;
   packageRoot: string;
@@ -201,6 +204,7 @@ interface PiAdapterEvidence {
 
 interface PiAdapterReadiness {
   ready: boolean;
+  mode: "native" | "legacy" | "unknown";
   diagnostic?: McpHostDiagnostic;
   evidence: PiAdapterEvidence;
 }
@@ -208,6 +212,7 @@ interface PiAdapterReadiness {
 interface HostReadiness {
   info: McpHostInfo;
   piAdapterEvidence: PiAdapterEvidence | null;
+  piMode?: "native" | "legacy" | "unknown";
 }
 
 function fail(code: string, message: string): never {
@@ -251,6 +256,7 @@ function samePiAdapterEvidence(
     sameSnapshot(left.trustStore, right.trustStore) &&
     sameSnapshot(left.packageManifest, right.packageManifest) &&
     sameSnapshot(left.entrypoint, right.entrypoint) &&
+    JSON.stringify(left.extensions) === JSON.stringify(right.extensions) &&
     left.settings.length === right.settings.length &&
     left.settings.every((entry, index) => {
       const current = right.settings[index];
@@ -500,6 +506,7 @@ async function inspectPiMcpAdapter(
   const evidence: PiAdapterEvidence = {
     agentDir,
     settings: [],
+    extensions: [],
     trustStorePath,
     trustStore: null,
     packageRoot,
@@ -510,10 +517,162 @@ async function inspectPiMcpAdapter(
   };
   const missing = (message: string): PiAdapterReadiness => ({
     ready: false,
+    mode: "legacy",
     diagnostic: { code: "MCP_PI_ADAPTER_REQUIRED", message },
     evidence,
   });
   try {
+    let globalSettings: McpRecord | null = null;
+    let projectSettings: McpRecord | null = null;
+    const unknown = (message: string): PiAdapterReadiness => ({
+      ready: false,
+      mode: "unknown",
+      diagnostic: { code: "MCP_PI_ADAPTER_UNKNOWN", message },
+      evidence,
+    });
+    for (const [index, settingsPath] of settingsFiles.entries()) {
+      await assertSafeDirectoryChain(path.dirname(settingsPath), true);
+      const snapshot = await readRegularFile(
+        settingsPath,
+        "Pi package settings",
+      );
+      evidence.settings.push({ path: settingsPath, snapshot });
+      if (!snapshot) continue;
+      let settings: McpRecord;
+      try {
+        const parsed = parseJsonc(snapshot.bytes.toString("utf8")).value;
+        if (!isMcpRecord(parsed))
+          return unknown("Pi settings must be an object: " + settingsPath);
+        settings = parsed;
+      } catch {
+        return unknown(
+          "Cannot safely inspect Pi package settings: " + settingsPath,
+        );
+      }
+      if (
+        settings.packages !== undefined &&
+        !Array.isArray(settings.packages)
+      ) {
+        return unknown(
+          "Pi package settings must use a packages array: " + settingsPath,
+        );
+      }
+      if (index === 0) globalSettings = settings;
+      else projectSettings = settings;
+    }
+    let nativeEnabled: boolean | undefined;
+    for (const settings of [globalSettings, projectSettings]) {
+      if (!settings) continue;
+      if (
+        settings.extensions !== undefined &&
+        !Array.isArray(settings.extensions)
+      ) {
+        return unknown("Cannot safely inspect Pi extension selectors");
+      }
+      const selectors: unknown[] = Array.isArray(settings.extensions)
+        ? settings.extensions
+        : [];
+      for (const selector of selectors) {
+        if (typeof selector !== "string")
+          return unknown("Cannot safely inspect Pi extension selectors");
+        if (/[?*]/.test(selector))
+          return unknown(
+            "Pi extension patterns make the active MCP mode ambiguous",
+          );
+        if (/^[+]?builtin:mcp$/.test(selector)) nativeEnabled = true;
+        else if (selector === "-builtin:mcp" || selector === "!builtin:mcp")
+          nativeEnabled = false;
+        else if (!/^[+!-]?builtin:/.test(selector) && !/^[!-]/.test(selector)) {
+          return unknown(
+            "Custom Pi extensions may replace /mcp; resolve the active MCP mode in Pi first",
+          );
+        }
+      }
+      const packages: unknown[] = Array.isArray(settings.packages)
+        ? settings.packages
+        : [];
+      for (const entry of packages) {
+        const source = piPackageSource(entry);
+        if (!source)
+          return unknown("Cannot safely inspect Pi package registration");
+        if (
+          !/^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(source) &&
+          !(
+            isMcpRecord(entry) &&
+            Array.isArray(entry.extensions) &&
+            entry.extensions.length === 0
+          )
+        ) {
+          return unknown(
+            "An unverified Pi package may replace /mcp: " + source,
+          );
+        }
+      }
+    }
+    for (const directory of [
+      path.join(agentDir, "extensions"),
+      path.join(targetDir, ".pi", "extensions"),
+    ]) {
+      await assertSafeDirectoryChain(directory, true);
+      const entries = (await lstatOrNull(directory))
+        ? (await readdir(directory)).sort()
+        : [];
+      evidence.extensions.push(directory, ...entries);
+      if (entries.length)
+        return unknown(
+          "Auto-loaded Pi extensions may replace /mcp; resolve the active MCP mode in Pi first",
+        );
+    }
+    const projectPackages: unknown[] = Array.isArray(projectSettings?.packages)
+      ? projectSettings.packages
+      : [];
+    const globalPackages: unknown[] = Array.isArray(globalSettings?.packages)
+      ? globalSettings.packages
+      : [];
+    const projectAdapter = projectPackages.find((entry) =>
+      /^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(piPackageSource(entry) ?? ""),
+    );
+    const effectivePackages =
+      projectAdapter === undefined ? globalPackages : [projectAdapter];
+    const usesProjectPackages = projectAdapter !== undefined;
+    const adapterRegistered = effectivePackages.some((entry) =>
+      /^npm:pi-mcp-adapter(?:@[^/]+)?$/.test(piPackageSource(entry) ?? ""),
+    );
+    if (!adapterRegistered) {
+      // Pi 0.99.0 introduced native MCP. A persisted runtime version or an
+      // explicit built-in selector is evidence; an installed package is not.
+      const version = globalSettings?.lastChangelogVersion;
+      const match =
+        typeof version === "string"
+          ? /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+          : null;
+      const modern =
+        match !== null && (Number(match[1]) > 0 || Number(match[2]) >= 99);
+      if (nativeEnabled === false)
+        return unknown("Pi's built-in MCP extension is disabled");
+      if (!modern && nativeEnabled !== true)
+        return unknown(
+          "Pi MCP mode is unverified; inspect the active Pi version and /mcp implementation first",
+        );
+      await assertSafeDirectoryChain(path.dirname(trustStorePath), true);
+      evidence.trustStore = await readRegularFile(
+        trustStorePath,
+        "Pi project trust store",
+      );
+      const trust = inspectPiProjectTrust(
+        targetDir,
+        evidence.trustStore,
+        globalSettings,
+      );
+      return trust.trusted
+        ? { ready: true, mode: "native", evidence }
+        : {
+            ready: false,
+            mode: "native",
+            diagnostic: trust.diagnostic,
+            evidence,
+          };
+    }
     await assertSafeDirectoryChain(packageRoot, true);
     evidence.packageManifest = await readRegularFile(
       packageManifestPath,
@@ -530,16 +689,9 @@ async function inspectPiMcpAdapter(
         evidence.packageManifest.bytes.toString("utf8"),
       ) as unknown;
     } catch {
-      return {
-        ready: false,
-        diagnostic: {
-          code: "MCP_PI_ADAPTER_UNKNOWN",
-          message:
-            "Cannot parse Pi MCP adapter package manifest: " +
-            packageManifestPath,
-        },
-        evidence,
-      };
+      return unknown(
+        "Cannot parse Pi MCP adapter package manifest: " + packageManifestPath,
+      );
     }
     const pi =
       isMcpRecord(manifest) && isMcpRecord(manifest.pi) ? manifest.pi : null;
@@ -557,16 +709,10 @@ async function inspectPiMcpAdapter(
       manifest.name !== "pi-mcp-adapter" ||
       extensionPaths.length === 0
     ) {
-      return {
-        ready: false,
-        diagnostic: {
-          code: "MCP_PI_ADAPTER_UNKNOWN",
-          message:
-            "Installed package is not a verifiable Pi MCP extension: " +
-            packageManifestPath,
-        },
-        evidence,
-      };
+      return unknown(
+        "Installed package is not a verifiable Pi MCP extension: " +
+          packageManifestPath,
+      );
     }
     const extensionPath = extensionPaths[0]!;
     const resolvedEntrypoint = path.resolve(packageRoot, extensionPath);
@@ -574,15 +720,9 @@ async function inspectPiMcpAdapter(
       resolvedEntrypoint !== packageRoot &&
       !resolvedEntrypoint.startsWith(packageRoot + path.sep)
     ) {
-      return {
-        ready: false,
-        diagnostic: {
-          code: "MCP_PI_ADAPTER_UNKNOWN",
-          message:
-            "Pi MCP adapter entrypoint escapes its package: " + extensionPath,
-        },
-        evidence,
-      };
+      return unknown(
+        "Pi MCP adapter entrypoint escapes its package: " + extensionPath,
+      );
     }
     evidence.entrypointPath = resolvedEntrypoint;
     await assertSafeDirectoryChain(path.dirname(resolvedEntrypoint), true);
@@ -595,55 +735,6 @@ async function inspectPiMcpAdapter(
         "Pi MCP adapter extension entrypoint is missing: " + resolvedEntrypoint,
       );
 
-    let globalSettings: McpRecord | null = null;
-    let projectSettings: McpRecord | null = null;
-    for (const [index, settingsPath] of settingsFiles.entries()) {
-      await assertSafeDirectoryChain(path.dirname(settingsPath), true);
-      const snapshot = await readRegularFile(
-        settingsPath,
-        "Pi package settings",
-      );
-      evidence.settings.push({ path: settingsPath, snapshot });
-      if (!snapshot) continue;
-      let settings: McpRecord;
-      try {
-        const parsed = parseJsonc(snapshot.bytes.toString("utf8")).value;
-        if (!isMcpRecord(parsed))
-          throw new Error("Pi settings must be an object");
-        settings = parsed;
-      } catch {
-        return {
-          ready: false,
-          diagnostic: {
-            code: "MCP_PI_ADAPTER_UNKNOWN",
-            message:
-              "Cannot safely inspect Pi package settings: " + settingsPath,
-          },
-          evidence,
-        };
-      }
-      if (
-        settings.packages !== undefined &&
-        !Array.isArray(settings.packages)
-      ) {
-        return {
-          ready: false,
-          diagnostic: {
-            code: "MCP_PI_ADAPTER_UNKNOWN",
-            message:
-              "Pi package settings must use a packages array: " + settingsPath,
-          },
-          evidence,
-        };
-      }
-      if (index === 0) globalSettings = settings;
-      else projectSettings = settings;
-    }
-    const projectPackages = projectSettings?.packages;
-    const usesProjectPackages = projectPackages !== undefined;
-    const effectivePackages = (
-      usesProjectPackages ? projectPackages : globalSettings?.packages
-    ) as unknown[] | undefined;
     if (
       !effectivePackages?.some((entry) =>
         piPackageEntryLoadsAdapter(entry, extensionPath),
@@ -667,6 +758,7 @@ async function inspectPiMcpAdapter(
       if (!trust.trusted) {
         return {
           ready: false,
+          mode: "legacy",
           diagnostic: trust.diagnostic ?? {
             code: "MCP_PI_PROJECT_UNTRUSTED",
             message: "Pi project-local MCP packages are not trusted",
@@ -675,9 +767,14 @@ async function inspectPiMcpAdapter(
         };
       }
     }
-    return { ready: true, evidence };
+    return { ready: true, mode: "legacy", evidence };
   } catch (error) {
-    return { ready: false, diagnostic: errorDiagnostic(error), evidence };
+    return {
+      ready: false,
+      mode: "unknown",
+      diagnostic: errorDiagnostic(error),
+      evidence,
+    };
   }
 }
 
@@ -694,7 +791,7 @@ async function resolveHostReadiness(
         diagnostic: {
           code: "MCP_PI_ADAPTER_UNVERIFIED",
           message:
-            "A project target is required to verify the separately installed Pi MCP adapter.",
+            "A project target is required to verify native Pi MCP or the registered legacy adapter.",
         },
       },
       piAdapterEvidence: null,
@@ -707,9 +804,16 @@ async function resolveHostReadiness(
       installMode: adapter.ready ? "config" : "prerequisite-needed",
       ...(adapter.ready
         ? {}
-        : { prerequisite: "pi-mcp-adapter", diagnostic: adapter.diagnostic }),
+        : {
+            prerequisite:
+              adapter.mode === "legacy"
+                ? "pi-mcp-adapter"
+                : "verified Pi MCP mode and project trust",
+            diagnostic: adapter.diagnostic,
+          }),
     },
     piAdapterEvidence: adapter.evidence,
+    piMode: adapter.mode,
   };
 }
 
@@ -721,11 +825,18 @@ async function resolveAllHostReadiness(
   );
 }
 
-function fallbackConfigPath(targetDir: string, host: McpHost): string {
+function fallbackConfigPath(
+  targetDir: string,
+  host: McpHost,
+  piMode?: HostReadiness["piMode"],
+): string {
+  if (host === "pi" && piMode === "native")
+    return path.join(targetDir, ".pi", "mcp.json");
   if (host === "atomic" || host === "pi")
     return path.join(targetDir, ".mcp.json");
   if (host === "omp") return path.join(targetDir, ".omp", "mcp.json");
   if (host === "senpi") return path.join(targetDir, ".senpi", "mcp.json");
+  if (host === "omo") return path.join(targetDir, ".omo", "mcp.json");
   return path.join(targetDir, "opencode.jsonc");
 }
 
@@ -734,7 +845,8 @@ function hostPathFor(
   host: McpHost,
   configPath: string,
 ): string {
-  return host === "atomic" || host === "pi"
+  return host === "atomic" ||
+    (host === "pi" && path.dirname(configPath) === targetDir)
     ? targetDir
     : path.dirname(configPath);
 }
@@ -748,7 +860,11 @@ async function inspectProviderHosts(
   return Promise.all(
     HOSTS.map(async (host, index) => {
       const currentReadiness = readiness[index]!;
-      const configPath = fallbackConfigPath(targetDir, host);
+      const configPath = fallbackConfigPath(
+        targetDir,
+        host,
+        currentReadiness.piMode,
+      );
       const hostPath = hostPathFor(targetDir, host, configPath);
       const base = {
         host,
@@ -790,7 +906,10 @@ async function inspectProviderHosts(
         return {
           ...base,
           status,
-          configured: !plan.preview.changed,
+          configured:
+            plan.preview.installMode === "config"
+              ? !plan.preview.changed
+              : null,
           hostPath: plan.preview.hostPath,
           configPath: plan.preview.configPath,
           ...(plan.preview.diagnostic
@@ -1221,7 +1340,8 @@ function addJsoncProperty(
 function expectedEntry(provider: McpProvider, host: McpHost): McpConfigEntry {
   if (host === "omp") return { type: "http", url: provider.url };
   if (host === "opencode") return { type: "remote", url: provider.url };
-  if (host === "senpi") return { type: "http", url: provider.url, auth: false };
+  if (host === "senpi" || host === "omo")
+    return { type: "http", url: provider.url, auth: false };
   return { url: provider.url };
 }
 
@@ -1240,11 +1360,9 @@ function configKey(host: McpHost): "mcp" | "mcpServers" {
 async function chooseConfigPath(
   targetDir: string,
   host: McpHost,
+  piMode?: HostReadiness["piMode"],
 ): Promise<string> {
-  if (host === "atomic" || host === "pi")
-    return path.join(targetDir, ".mcp.json");
-  if (host === "omp") return path.join(targetDir, ".omp", "mcp.json");
-  if (host === "senpi") return path.join(targetDir, ".senpi", "mcp.json");
+  if (host !== "opencode") return fallbackConfigPath(targetDir, host, piMode);
 
   const candidates = [
     "opencode.json",
@@ -1271,10 +1389,10 @@ async function readConfig(
   targetDir: string,
   host: McpHost,
   provider: McpProvider,
+  piMode?: HostReadiness["piMode"],
 ): Promise<ConfigSnapshot | null> {
-  const configPath = await chooseConfigPath(targetDir, host);
-  const hostPath =
-    host === "pi" || host === "atomic" ? targetDir : path.dirname(configPath);
+  const configPath = await chooseConfigPath(targetDir, host, piMode);
+  const hostPath = hostPathFor(targetDir, host, configPath);
   await assertSafeDirectoryChain(hostPath, true);
   const key = configKey(host);
   const expected = expectedEntry(provider, host);
@@ -1404,11 +1522,30 @@ async function makePlan(
   const provider = findProvider(catalog, options.providerName);
   const readiness =
     hostReadiness ?? (await resolveHostReadiness(options.host, targetDir));
-  const config = await readConfig(targetDir, options.host, provider);
-  const hostPath =
-    options.host === "pi" || options.host === "atomic"
-      ? targetDir
-      : path.dirname(config!.path);
+  if (readiness.piMode === "unknown") {
+    return {
+      preview: freezeDeep({
+        provider,
+        ...readiness.info,
+        hostPath: path.join(targetDir, ".pi"),
+        configPath: null,
+        changed: false,
+        diff: [],
+        resultingConfig: null,
+        catalogPath: catalog.path,
+      }),
+      catalog,
+      config: null,
+      piAdapterEvidence: readiness.piAdapterEvidence,
+    };
+  }
+  const config = await readConfig(
+    targetDir,
+    options.host,
+    provider,
+    readiness.piMode,
+  );
+  const hostPath = hostPathFor(targetDir, options.host, config!.path);
   const configPath = config!.path;
   const changed = config!.changed;
   const diff: McpInstallDiff[] = !config!.changed

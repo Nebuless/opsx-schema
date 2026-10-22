@@ -62,7 +62,7 @@ export async function commandChange(
     )
       throw new OpsxError(
         "USAGE",
-        "--skill-host must select a supported host at most once: opencode, omp, pi, atomic, senpi.",
+        "--skill-host must select a supported host at most once: opencode, omp, pi, atomic, senpi, omo.",
       );
     if (
       (many(parsed, "--profile").length > 0 || selectedHosts.length > 0) &&
@@ -113,7 +113,7 @@ export async function commandChange(
     if (hosts.some((host) => !isSkillInstallHostId(host)))
       throw new OpsxError(
         "USAGE",
-        "--skill-host must be opencode, omp, pi, atomic, or senpi.",
+        "--skill-host must be opencode, omp, pi, atomic, senpi, or omo.",
       );
     const noProfiles = one(parsed, "--no-profiles") !== undefined;
     const applyToken = one(parsed, "--apply-token");
@@ -247,7 +247,7 @@ export async function commandSchema(
 ): Promise<unknown> {
   const [operation, ...rest] = args;
   const usage =
-    "schema switch <name> [--profile <agent-id> ...] [--migrate <change> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--apply-token <token>]";
+    "schema switch <name> [--profile <agent-id> ...] [--migrate <change> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle default|recommended|all] [--apply-token <token>]";
   if (operation !== "switch") throw new OpsxError("USAGE", "Usage: " + usage);
   const parsed = flags(rest, {
     "--profile": "repeat",
@@ -262,7 +262,7 @@ export async function commandSchema(
     if (!isSkillInstallHostId(host))
       throw new OpsxError(
         "USAGE",
-        "--skill-host must be opencode, omp, pi, atomic, or senpi.",
+        "--skill-host must be opencode, omp, pi, atomic, senpi, or omo.",
       );
     if (skillHosts.includes(host))
       throw new OpsxError(

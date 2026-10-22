@@ -39,17 +39,7 @@ An empty directory also remains incomplete. Missing CLI metadata blocks work.
 `readOnly: true`, and `auth: none`. This package declares `inspo` and
 `ui-skills`.
 
-After user approval, agents inspect target host evidence. Reuse current or
-prior approval; ask once only when absent. Invoke `--mcp` with `-a`:
-
-```sh
-openspec-schemas install intent-driven-design -t . --mcp all -a opencode
-```
-
-`atomic`, `omp`, and `opencode` receive remote read-only entries. `pi` is
-guided-only and writes no MCP config until user selects supported extension.
-Record catalog names, endpoints, host evidence or explicit host, approval,
-host result, and guided-only state in journey receipt.
+MCP setup is optional and separate from schema installation. Inspect the host and preview each selected provider with `opsx-schema mcp install inspo --host omo --schema intent-driven-design` or the corresponding `ui-skills` command. Apply requires its fresh token and interactive provider approval. OmO uses `.omo/mcp.json`; standalone Senpi uses `.senpi/mcp.json`. Native Pi uses `.pi/mcp.json`; a verified legacy adapter retains root `.mcp.json`. Unknown mode evidence blocks configuration.
 
 ## Workflow And Ownership
 
@@ -108,7 +98,7 @@ When routes overlap, present conflict and evidence; user decides direction.
 
 | Route | Trigger | Exclusion | Prerequisite | Owner artifact | Optional output | Approval gate | Loopback | Unavailable fallback or blocker | Provenance and license | Conflict rule |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Impeccable | UI or product surface needs critique, direction, or polish | Impeccable exclusion: backend-only, infrastructure-only, or settled visual work | Discovery receipt and inspectable surface or brief | `journey.md`, then selected guardrails in `design.md` | Critique, direction brief, or UI guidance | Route and direction pauses | `journey` for route, `design` for guardrails | Record `skill_invocation_unavailable`; block UI direction unless user approves evidence-based manual fallback | [`pbakaus/impeccable@f2c7051`](https://github.com/pbakaus/impeccable/tree/f2c7051), [Apache-2.0](https://github.com/pbakaus/impeccable/blob/f2c7051/LICENSE) | Default yields to narrower specialist only with user approval |
+| Impeccable | UI or product surface needs critique, direction, or polish | Impeccable exclusion: backend-only, infrastructure-only, or settled visual work | Discovery receipt and inspectable surface or brief | `journey.md`, then selected guardrails in `design.md` | Critique, direction brief, or UI guidance | Route and direction pauses | `journey` for route, `design` for guardrails | Record `skill_invocation_unavailable`; block UI direction unless user approves evidence-based manual fallback | [`pbakaus/impeccable@aeeb3d8c`](https://github.com/pbakaus/impeccable/tree/aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f), [Apache-2.0](https://github.com/pbakaus/impeccable/blob/aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f/LICENSE) | Default yields to narrower specialist only with user approval |
 | Emil Kowalski | Interaction motion, animation feel, or transition craft is material | Emil Kowalski exclusion: static surface or motion forbidden by accessibility or platform rules | Approved UI route and motion constraints | `design.md` | Motion critique or interaction specification | Direction pause | `design` | Record `skill_invocation_unavailable`; continue with Impeccable constraints or block if motion is core | [`emilkowalski/skills@85e8e23`](https://github.com/emilkowalski/skills/tree/85e8e23), [MIT](https://github.com/emilkowalski/skills/blob/85e8e23/LICENSE) | Impeccable frames product direction; this route owns motion detail |
 | Garden Skills | Broad design-system or product-design practice spans several surfaces | Garden Skills exclusion: one isolated component with no system impact | Discovery signals showing cross-surface consistency need | `journey.md`, selected rules in `design.md` | Design-system audit or practice-specific brief | Route pause | `journey` or `design` by changed decision | Record `skill_invocation_unavailable`; use Impeccable only if it covers observed signals, otherwise block | [`ConardLi/garden-skills@aaf9a82`](https://github.com/ConardLi/garden-skills/tree/aaf9a82), [MIT](https://github.com/ConardLi/garden-skills/blob/aaf9a82/LICENSE) | User chooses when advice conflicts with product direction |
 | Elaya Design | Brand, visual identity, or high-level art direction is unresolved | Elaya Design exclusion: established brand with no requested identity change | Brand inputs, audience, and approved scope | `journey.md`, selected direction in `design.md` | Brand or visual direction board | Direction pause | `journey` | Record `skill_invocation_unavailable`; keep existing brand or block new identity choice | [`elayadesign/ai-design-skills@1c1e97c`](https://github.com/elayadesign/ai-design-skills/tree/1c1e97c), [MIT](https://github.com/elayadesign/ai-design-skills/blob/1c1e97c/LICENSE) | User resolves brand direction before UI-detail routes proceed |
@@ -161,7 +151,7 @@ Agents must detect overlap, request user decisions, and repair affected content.
 
 ## Skills And Installation Boundary
 
-Baseline installation may provide Impeccable plus Matt Pocock's `grill-me`,
+Installation includes required Impeccable plus Matt Pocock's `grill-me`,
 `grill-with-docs`, `grilling`, and `domain-modeling`. These support default UI
 routing, mandatory discovery, durable interview notes, and shared terminology.
 
@@ -178,29 +168,16 @@ read-only, no-auth resources only. `inspo` uses
 `https://inspomcp.dev/api/mcp`; `ui-skills` uses
 `https://www.ui-skills.com/mcp`.
 
-An agent first identifies host from project evidence. Explicit current or prior
-user approval is reused; otherwise it asks once. Only approved setup invokes:
+Only the added Inspo and UI Skills MCP servers are optional installation choices. Schema installation never configures either server. Preview one named provider with `opsx-schema mcp install <inspo|ui-skills> --host <atomic|omp|opencode|pi|senpi|omo> --schema intent-driven-design`, then repeat with the fresh apply token in a TTY and approve the exact diff. Existing conflicting entries are refused, not force-replaced.
 
-```sh
-openspec-schemas install intent-driven-design -t . --mcp all -a <atomic|omp|opencode|pi>
-```
-
-Use `--mcp inspo` or `--mcp ui-skills` for one catalog entry. `-a|--agents`
-selects host. Atomic writes `.mcp.json`; Oh My Pi writes `.omp/mcp.json`;
-OpenCode writes an existing sole project config or `opencode.jsonc`. Existing
-server entries are preserved as direct `mcp.<server>` remote entries. A
-different selected entry stops unless `--force`
-explicitly replaces that entry alone. Pi has no native MCP config: setup is
-guided-only until user selects compatible Pi extension. No catalog use means no
-host detection or MCP config mutation. A later MCP opt-in reuses an installed
-schema without requiring schema replacement or `--force`.
+Schema installation (`opsx-schema schemas install intent-driven-design --project <root>`) includes a reviewed skill plan. With no host customization, required dependencies use shared `.agents/skills`. Impeccable is not an opt-out dependency. Host-specific selection changes the destination, not this requirement. Installation preserves executable modes but does not register nested helper agents or automatic hooks. Use Impeccable's manual detector/helper fallbacks until native adapters are explicitly implemented. OpenSpec owns change-local `design.md`, ADRs, and `tasks.md`; Impeccable `DESIGN.md` is not a replacement. Non-UI work does not activate design scans.
 
 ## Associated Skills
 
 These five manifest skills are installed automatically into `.agents/skills/`
 by the install guide's skills step:
 
-- [`impeccable`](https://github.com/pbakaus/impeccable/tree/f2c7051/.agents/skills/impeccable) - Runs default UI and product design critique and direction.
+- [`impeccable`](https://github.com/pbakaus/impeccable/tree/aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f/.agents/skills/impeccable) - Runs default UI and product design critique and direction.
 - [`grill-me`](https://github.com/mattpocock/skills/tree/74ca5fe077456a0b3b2f5310cf9430999fd0b5fd/skills/productivity/grill-me) - Stress-tests a plan or design through focused questions.
 - [`grill-with-docs`](https://github.com/mattpocock/skills/tree/74ca5fe077456a0b3b2f5310cf9430999fd0b5fd/skills/engineering/grill-with-docs) - Runs discovery while producing durable ADR and glossary material.
 - [`grilling`](https://github.com/mattpocock/skills/tree/74ca5fe077456a0b3b2f5310cf9430999fd0b5fd/skills/productivity/grilling) - Supplies mandatory material-decision discovery protocol.
@@ -210,7 +187,7 @@ by the install guide's skills step:
 
 Pinned links form reproducible research snapshot used for this guide:
 
-- [Impeccable](https://github.com/pbakaus/impeccable/tree/f2c7051)
+- [Impeccable](https://github.com/pbakaus/impeccable/tree/aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f)
 - [Matt Pocock skills](https://github.com/mattpocock/skills/tree/74ca5fe077456a0b3b2f5310cf9430999fd0b5fd)
 - [Emil Kowalski skills](https://github.com/emilkowalski/skills/tree/85e8e23)
 - [Garden Skills](https://github.com/ConardLi/garden-skills/tree/aaf9a82)
@@ -221,10 +198,7 @@ Pinned links form reproducible research snapshot used for this guide:
 - [Owl-Listener designer skills](https://github.com/Owl-Listener/designer-skills/tree/9a6930c)
 - [Leonxlnx taste skill](https://github.com/Leonxlnx/taste-skill/tree/e79ca9e)
 
-Pins don't promise current behavior forever. Installer manifests identify
-repository and path but resolve a mutable default-branch checkout unless the
-installer explicitly supports refs. Compare installed content with research
-snapshot before relying on claims here.
+The third tab-separated manifest field pins a full immutable commit. New installs acquire that exact revision. Impeccable is pinned to reviewed release 4.7.0 (`aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f`); Matt Pocock skills retain the documented research revision. Installed metadata alone does not prove an untouched upstream release.
 
 ## Validate
 

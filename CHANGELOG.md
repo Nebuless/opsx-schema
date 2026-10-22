@@ -5,6 +5,15 @@ schema collection history remains in [resources/CHANGELOG.md](resources/CHANGELO
 
 ## [Unreleased]
 
+### Added
+
+- Install required Impeccable with intent-driven-design and acquire its reviewed immutable source revision.
+- Support native OmO skill and MCP destinations separately from standalone Senpi.
+
+### Fixed
+
+- Route Pi MCP configuration from inspected native or verified legacy-adapter evidence while preserving project trust and fresh interactive approval.
+
 ## [0.4.1] - 2026-10-15
 
 ### Added

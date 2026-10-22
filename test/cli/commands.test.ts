@@ -1094,7 +1094,7 @@ test(
     expect(output.ok).toBe(true);
     expect(output.data.phase).toBe("preview");
     expect(output.data.plan.skillHosts.map((host) => host.host).sort()).toEqual(
-      ["atomic", "omp", "opencode", "pi", "senpi"],
+      ["atomic", "omo", "omp", "opencode", "pi", "senpi"],
     );
     expect(
       output.data.plan.skillHosts.every((host) => host.targets.length === 0),

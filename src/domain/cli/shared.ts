@@ -209,6 +209,7 @@ export function statusOf(
   if (
     record.phase === "preview" &&
     (record.data?.ready === false ||
+      record.skills?.canApply === false ||
       record.plan?.canApply === false ||
       record.plan?.action === "refuse" ||
       record.plan?.status === "collision" ||

@@ -26,11 +26,11 @@ TAB=$(printf '\t')
 
 EXPECTED_MANIFEST=$TMP/intent-driven-design-skills.txt
 printf '%s\n' \
-	"pbakaus/impeccable${TAB}.agents/skills/impeccable" \
-	"mattpocock/skills${TAB}skills/productivity/grill-me" \
-	"mattpocock/skills${TAB}skills/engineering/grill-with-docs" \
-	"mattpocock/skills${TAB}skills/productivity/grilling" \
-	"mattpocock/skills${TAB}skills/engineering/domain-modeling" >"$EXPECTED_MANIFEST"
+	"pbakaus/impeccable${TAB}.agents/skills/impeccable${TAB}aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f" \
+	"mattpocock/skills${TAB}skills/productivity/grill-me${TAB}74ca5fe077456a0b3b2f5310cf9430999fd0b5fd" \
+	"mattpocock/skills${TAB}skills/engineering/grill-with-docs${TAB}74ca5fe077456a0b3b2f5310cf9430999fd0b5fd" \
+	"mattpocock/skills${TAB}skills/productivity/grilling${TAB}74ca5fe077456a0b3b2f5310cf9430999fd0b5fd" \
+	"mattpocock/skills${TAB}skills/engineering/domain-modeling${TAB}74ca5fe077456a0b3b2f5310cf9430999fd0b5fd" >"$EXPECTED_MANIFEST"
 cmp -s "$EXPECTED_MANIFEST" "$ROOT/openspec/schemas/intent-driven-design/skills.txt" ||
 	fail "intent-driven-design manifest must contain the exact five source-qualified baseline skills"
 
@@ -49,7 +49,6 @@ printf '%s\n' \
 	"Fission-AI/OpenSpec${TAB}skills/openspec-archive-change" >"$EXPECTED_COMPOUND"
 cmp -s "$EXPECTED_COMPOUND" "$ROOT/openspec/schemas/compound-intent-driven/skills.txt" ||
 	fail "compound-intent-driven manifest must contain exact CE and OpenSpec lifecycle skills"
-
 
 # Source-aware installation clones two sources and preserves full directories.
 SOURCE_AWARE=$TMP/source-aware

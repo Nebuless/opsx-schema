@@ -45,7 +45,7 @@ const expectedSchemaDigests: Record<string, string> = {
   "intent-driven":
     "f4fdbd2c742fe0e7b4486811d1a58c74fb47dd4586f2586828a0a6245d4d613b",
   "intent-driven-design":
-    "af3c600af0815002f67b786ad5636edf75037e61f334572eb88fe224d2b2f953",
+    "da88890ceff5a28cfd17f3b2a903f132ceac7364abb10725cebfe8adeedbd7ed",
   "intent-driven-engineering":
     "0f20756a95a216fcd25873b305bfeb0782c942b2109dee5ba49d71679a4184dd",
   "intent-driven-superpowers":
@@ -130,7 +130,7 @@ test("exposes the complete verified OpenSpec schemas 1.8.1 snapshot from resourc
       );
     }
   }
-  expect(totalFileCount).toBe(80);
+  expect(totalFileCount).toBe(81);
   const compound = await inspectBundledSchema("compound-intent-driven");
   expect(compound.files).toContain("skills.txt");
   expect(compound.adapters).toContain("adapters/shared/opsx-ce-work.md");
@@ -166,9 +166,10 @@ test("rejects tampered resource files, licenses, and symlinked source roots", as
       path.resolve(import.meta.dir, "../../src/domain/project.ts"),
       path.join(domainDirectory, "project.ts"),
     ),
-    copyFile(
+    symlink(
       path.resolve(import.meta.dir, "../../src/catalog/schemas.ts"),
       path.join(catalogDirectory, "schemas.ts"),
+      "file",
     ),
     copyFile(
       path.resolve(import.meta.dir, "../../src/openspec/client.ts"),

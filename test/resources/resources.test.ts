@@ -113,6 +113,244 @@ test("bare and source-qualified skill declarations resolve to complete source fo
   );
 });
 
+test("source declarations retain immutable revisions and reject unsafe refs", () => {
+  const revision = "aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f";
+  expect(
+    parseSkillsManifest(
+      `pbakaus/impeccable\t.agents/skills/impeccable\t${revision}\n`,
+    ),
+  ).toEqual([
+    {
+      repository: "pbakaus/impeccable",
+      path: ".agents/skills/impeccable",
+      skill: "impeccable",
+      revision,
+    },
+  ]);
+  expect(() =>
+    parseSkillsManifest(
+      "pbakaus/impeccable\t.agents/skills/impeccable\tmain\n",
+    ),
+  ).toThrow(expect.objectContaining({ code: "RESOURCE_MANIFEST_INVALID" }));
+});
+
+test("required skills install without profile customization", async () => {
+  const f = await fixture("optional-skill\n");
+  await writeFile(
+    path.join(f.schemaRoot, "required-skills.txt"),
+    "required-skill\n",
+  );
+  await addSkill(f.sourceRoot, "optional-skill");
+  await addSkill(f.sourceRoot, "required-skill");
+  const plan = await previewSkillInstall(
+    { projectRoot: f.projectRoot, schemaRoot: f.schemaRoot, profiles: [] },
+    f.options,
+  );
+  expect(plan.targets.map((target) => target.skill)).toContain(
+    "required-skill",
+  );
+  await applySkillInstall(plan, f.options);
+  expect(
+    await readFile(
+      path.join(f.projectRoot, ".agents/skills/required-skill/SKILL.md"),
+      "utf8",
+    ),
+  ).toBe("# required-skill\n");
+});
+
+test("required dependencies cannot be omitted by another bundle or overwrite local work", async () => {
+  const f = await fixture("");
+  await addSkill(f.sourceRoot, "required-skill");
+  await writeFile(
+    path.join(f.schemaRoot, "required-skills.txt"),
+    "required-skill\n",
+  );
+  await writeFile(
+    path.join(f.schemaRoot, "skill-profiles.yaml"),
+    JSON.stringify({
+      schemaVersion: 1,
+      profiles: { recommended: { extends: [], resources: [] } },
+    }),
+  );
+  const target = path.join(f.projectRoot, ".agents/skills/required-skill");
+  await mkdir(target, { recursive: true });
+  await writeFile(path.join(target, "SKILL.md"), "local work\n");
+  const plan = await previewSkillInstall(
+    {
+      projectRoot: f.projectRoot,
+      schemaRoot: f.schemaRoot,
+      profiles: [],
+      skillBundle: "recommended",
+    },
+    f.options,
+  );
+  expect(plan.targets).toMatchObject([
+    { skill: "required-skill", action: "refuse", state: "unmanaged" },
+  ]);
+  await expect(applySkillInstall(plan, f.options)).rejects.toMatchObject({
+    code: "RESOURCE_BLOCKED",
+  });
+  expect(await readFile(path.join(target, "SKILL.md"), "utf8")).toBe(
+    "local work\n",
+  );
+});
+
+test("required dependency changes invalidate an existing install preview", async () => {
+  const f = await fixture("");
+  await addSkill(f.sourceRoot, "required-skill");
+  const manifest = path.join(f.schemaRoot, "required-skills.txt");
+  await writeFile(manifest, "required-skill\n");
+  const plan = await previewSkillInstall(
+    { projectRoot: f.projectRoot, schemaRoot: f.schemaRoot, profiles: [] },
+    f.options,
+  );
+  await writeFile(manifest, "changed-skill\n");
+  await expect(applySkillInstall(plan, f.options)).rejects.toMatchObject({
+    code: "RESOURCE_STALE",
+  });
+  expect(await readdir(f.projectRoot)).toEqual([]);
+});
+
+test("required skills use only an explicit profile or native host destination", async () => {
+  const f = await fixture("");
+  await addSkill(f.sourceRoot, "required-skill", {
+    "SKILL.md":
+      "---\nname: required-skill\ndescription: Required fixture skill\n---\n",
+  });
+  await writeFile(
+    path.join(f.schemaRoot, "required-skills.txt"),
+    "required-skill\n",
+  );
+  const profile = await previewSkillInstall(
+    {
+      projectRoot: f.projectRoot,
+      schemaRoot: f.schemaRoot,
+      profiles: ["claude"],
+    },
+    f.options,
+  );
+  expect(profile.request.profiles).toEqual(["claude"]);
+  expect(profile.targets.map((target) => target.relativeTarget)).toEqual([
+    ".claude/skills/required-skill",
+  ]);
+  const host = await previewSkillInstall(
+    {
+      projectRoot: f.projectRoot,
+      schemaRoot: f.schemaRoot,
+      profiles: [],
+      skillHosts: ["omo"],
+    },
+    f.options,
+  );
+  expect(host.request.profiles).toEqual([]);
+  expect(host.targets).toEqual([]);
+  expect(
+    host.skillHosts
+      .find((item) => item.host === "omo")
+      ?.targets.map((target) => target.relativeTarget),
+  ).toEqual([".omo/skills/required-skill"]);
+  await applySkillInstall(host, f.options);
+  expect(
+    await readFile(
+      path.join(f.projectRoot, ".omo/skills/required-skill/SKILL.md"),
+      "utf8",
+    ),
+  ).toContain("Required fixture skill");
+  expect(await readdir(f.projectRoot)).not.toContain(".agents");
+  expect(await readdir(f.projectRoot)).not.toContain(".senpi");
+});
+
+test("required immutable declarations merge into every declared bundle and reject source mismatches", async () => {
+  const f = await fixture("");
+  const revision = "a".repeat(40);
+  await writeFile(
+    path.join(f.schemaRoot, "required-skills.txt"),
+    `${repository}\t.agents/skills/required-skill\t${revision}\n`,
+  );
+  const bundleFile = path.join(f.schemaRoot, "skill-profiles.yaml");
+  await writeFile(
+    bundleFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      profiles: {
+        recommended: { extends: [], resources: [] },
+        all: {
+          extends: [],
+          resources: [
+            {
+              source: repository,
+              path: ".agents/skills/required-skill",
+              revision,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  const catalog = await loadSkillBundles(f.schemaRoot);
+  for (const bundle of catalog.bundles) {
+    expect(catalog.declarations[bundle]).toEqual([
+      {
+        repository,
+        path: ".agents/skills/required-skill",
+        skill: "required-skill",
+        revision,
+      },
+    ]);
+  }
+  await writeFile(
+    bundleFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      profiles: {
+        recommended: {
+          extends: [],
+          resources: [
+            {
+              source: repository,
+              path: ".agents/skills/required-skill",
+              revision: "b".repeat(40),
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await expect(loadSkillBundles(f.schemaRoot)).rejects.toMatchObject({
+    code: "RESOURCE_TARGET_AMBIGUOUS",
+  });
+});
+
+test("required manifest symlinks refuse installation and revision-only changes stale previews", async () => {
+  const f = await fixture("");
+  await addSkill(f.sourceRoot, "required-skill");
+  const manifest = path.join(f.schemaRoot, "required-skills.txt");
+  await writeFile(
+    manifest,
+    `${repository}\t.agents/skills/required-skill\t${"a".repeat(40)}\n`,
+  );
+  const request = {
+    projectRoot: f.projectRoot,
+    schemaRoot: f.schemaRoot,
+    profiles: [],
+  };
+  const plan = await previewSkillInstall(request, f.options);
+  await writeFile(
+    manifest,
+    `${repository}\t.agents/skills/required-skill\t${"b".repeat(40)}\n`,
+  );
+  await expect(applySkillInstall(plan, f.options)).rejects.toMatchObject({
+    code: "RESOURCE_STALE",
+  });
+  await rm(manifest);
+  await writeFile(path.join(f.root, "outside.txt"), "required-skill\n");
+  await symlink(path.join(f.root, "outside.txt"), manifest);
+  await expect(previewSkillInstall(request, f.options)).rejects.toMatchObject({
+    code: "RESOURCE_MANIFEST_UNSAFE",
+  });
+  expect(await readdir(f.projectRoot)).toEqual([]);
+});
+
 test("checked-in named agents map only to project-local skill targets", async () => {
   const checkedIn = await loadAgentProfiles();
   expect(checkedIn.map((profile) => profile.id)).toEqual([
@@ -791,7 +1029,7 @@ test("installation and disable refuse symlinked skill targets", async () => {
   );
 });
 
-test("five native project skill hosts stage without writing and install to their verified roots", async () => {
+test("native project skill hosts stage without writing and install to their verified roots", async () => {
   const f = await fixture("host-skill\n");
   const skill = `---\nname: host-skill\ndescription: A fixture skill for native hosts.\n---\n\n# Host skill\n`;
   await addSkill(f.sourceRoot, "host-skill", {
@@ -812,6 +1050,7 @@ test("five native project skill hosts stage without writing and install to their
       trust: "external",
     },
     { host: "senpi", relativeDestination: ".senpi/skills", trust: "external" },
+    { host: "omo", relativeDestination: ".omo/skills", trust: "external" },
   ] as const;
   const hostIds: readonly SkillInstallHostId[] = SKILL_INSTALL_HOST_IDS;
   const expectedHostIds: readonly SkillInstallHostId[] = expectedHosts.map(

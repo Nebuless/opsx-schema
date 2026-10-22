@@ -33,11 +33,12 @@ function mcpHost(value: string | undefined): McpHost {
     value !== "omp" &&
     value !== "opencode" &&
     value !== "pi" &&
-    value !== "senpi"
+    value !== "senpi" &&
+    value !== "omo"
   )
     throw new OpsxError(
       "USAGE",
-      "--host must be atomic, omp, opencode, pi, or senpi.",
+      "--host must be atomic, omp, opencode, pi, senpi, or omo.",
     );
   return value;
 }

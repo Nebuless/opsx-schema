@@ -8,6 +8,12 @@ import {
   prepareBundledSchema,
 } from "../../../bundled/index.ts";
 import { resolveRevision } from "../../../revisions/index.ts";
+import {
+  applySkillInstall,
+  defaultSkillProfiles,
+  previewSkillInstall,
+} from "../../../resources/index.ts";
+import { withProjectMutationLock } from "../../../project-lock.ts";
 import { validateBundledSchema, validateProjectSchema } from "../checks.ts";
 import {
   applyToken,
@@ -49,7 +55,22 @@ export async function commandSchemas(
     await new OpenSpecClient(root).ensureSupported();
     const destination = one(parsed, "--as");
     const plan = await prepareBundledSchema(root, name, destination);
-    const binding = { root, name, destination: destination ?? name, plan };
+    const profiles = await defaultSkillProfiles(plan.sourceDirectory, [], []);
+    const skills = profiles.length
+      ? await previewSkillInstall({
+          projectRoot: root,
+          schemaRoot: plan.sourceDirectory,
+          schemaName: name,
+          profiles,
+        })
+      : null;
+    const binding = {
+      root,
+      name,
+      destination: destination ?? name,
+      plan,
+      skills,
+    };
     const token = applyToken("schemas.install", binding);
     const supplied = one(parsed, "--apply-token");
     if (supplied !== undefined) {
@@ -58,16 +79,31 @@ export async function commandSchemas(
           "APPLY_TOKEN_STALE",
           "The apply token does not match this exact, current schema installation preview.",
         );
-      return {
-        phase: "applied",
-        target: plan.destination,
-        result: await installBundledSchema(root, name, plan),
-      };
+      if (skills && !skills.canApply)
+        throw new OpsxError(
+          "RESOURCE_BLOCKED",
+          "Required schema skills have conflicts; no schema was installed.",
+        );
+      if (plan.status === "collision")
+        throw new OpsxError(
+          "BUNDLED_SCHEMA_COLLISION",
+          plan.reason ?? "Schema target conflicts.",
+        );
+      return withProjectMutationLock(root, async () => {
+        const installedSkills = skills ? await applySkillInstall(skills) : null;
+        return {
+          phase: "applied",
+          target: plan.destination,
+          result: await installBundledSchema(root, name, plan),
+          skills: installedSkills,
+        };
+      });
     }
     return {
       phase: "preview",
       target: plan.destination,
       plan,
+      skills,
       confirmation: { exactTarget: plan.destination, token },
     };
   }
