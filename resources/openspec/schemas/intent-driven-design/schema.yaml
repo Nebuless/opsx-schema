@@ -22,12 +22,14 @@ artifacts:
 
        When this schema's optional MCP catalog is relevant, inspect project host
        evidence. Reuse explicit current or prior user approval for MCP setup; if
-       none exists, ask once before configuration. After approval, invoke the
-       installer with `--mcp <all|catalog-name[,catalog-name...]>` and the chosen
-       `-a|--agents <host>`. Record host, evidence, approval source, target,
+       none exists, ask once before configuration. After approval, invoke
+       `opsx-schema mcp install <provider> --host <host> --schema intent-driven-design`
+       for each selected provider. Record host, evidence, approval source, target,
        selected servers, per-server result, validation, and fallback in journey.
-       Never configure before approval. Pi has no native MCP configuration and is
-       guided-only until the user selects a compatible Pi extension.
+       Never configure before approval. Native Pi uses `.pi/mcp.json`; a verified
+       legacy adapter retains `.mcp.json`. OmO uses `.omo/mcp.json`, not `.senpi`.
+       Impeccable is installed by default as a required schema dependency. Only
+       Inspo and UI Skills MCP additions are optional installation choices.
 
       File existence is OpenSpec completion evidence. Editing a predecessor does
       not semantically invalidate, reopen, reconcile, or delete downstream

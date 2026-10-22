@@ -59,6 +59,7 @@ import type { ValidationResult } from "../validation/index.ts";
 import {
   assertSkillBundleDeclared,
   loadAgentProfileDigest,
+  defaultSkillProfiles,
   loadAgentProfiles,
   loadSkillBundles,
   parseSkillsManifest,
@@ -498,7 +499,7 @@ function isProjectSelectionReceipt(
     "manifestDigests",
   ];
   if (
-    Object.keys(receipt).sort().join(" ") !== exactKeys.sort().join(" ") ||
+    Object.keys(receipt).sort().join("\0") !== exactKeys.sort().join("\0") ||
     receipt.version !== 1 ||
     !isRevisionRef(receipt.effectiveRevision) ||
     !isSkillBundle(receipt.skillBundle)
@@ -524,8 +525,8 @@ function isProjectSelectionReceipt(
   const manifestDigests = digests as Record<string, unknown>;
   const digestKeys = ["agentProfiles", "schemaSkills", "skillBundles"];
   return (
-    Object.keys(manifestDigests).sort().join(" ") ===
-      digestKeys.sort().join(" ") &&
+    Object.keys(manifestDigests).sort().join("\0") ===
+      digestKeys.sort().join("\0") &&
     typeof manifestDigests.agentProfiles === "string" &&
     /^[0-9a-f]{64}$/.test(manifestDigests.agentProfiles) &&
     typeof manifestDigests.schemaSkills === "string" &&
@@ -1319,6 +1320,23 @@ async function installPlan(
     }
   }
 
+  if (targetSchemaRoot) {
+    try {
+      request.profiles = await defaultSkillProfiles(
+        targetSchemaRoot,
+        request.profiles,
+        request.skillHosts ?? [],
+        options.profileManifestPath,
+      );
+    } catch (error) {
+      diagnostics.push(
+        diagnostic(
+          errorCode(error, "RESOURCE_PREVIEW_FAILED"),
+          errorMessage(error),
+        ),
+      );
+    }
+  }
   const selectedProfileIds = request.profiles;
   const selectedSkillHosts = request.skillHosts ?? [];
   let selectedProfiles: AgentProfile[] = [];
@@ -1336,11 +1354,8 @@ async function installPlan(
     );
   } else {
     try {
-      assertSkillBundleDeclared(
-        await loadSkillBundles(targetSchemaRoot),
-        request.schema,
-        request.skillBundle!,
-      );
+      const catalog = await loadSkillBundles(targetSchemaRoot);
+      assertSkillBundleDeclared(catalog, request.schema, request.skillBundle!);
       const allProfiles = await loadAgentProfiles(options.profileManifestPath);
       const byId = new Map(allProfiles.map((profile) => [profile.id, profile]));
       selectedProfiles = selectedProfileIds
@@ -1351,14 +1366,7 @@ async function installPlan(
         diagnostics.push(
           diagnostic("PROFILE_NOT_FOUND", "Unknown agent profile: " + id),
         );
-      let declaredSkills: ReturnType<typeof parseSkillsManifest> = [];
-      try {
-        declaredSkills = parseSkillsManifest(
-          await readFile(path.join(targetSchemaRoot, "skills.txt"), "utf8"),
-        );
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      const declaredSkills = catalog.declarations[request.skillBundle!] ?? [];
       if (
         selectedProfileIds.length === 0 &&
         selectedSkillHosts.length === 0 &&
@@ -1372,7 +1380,6 @@ async function installPlan(
         );
       }
       if (selectedProfileIds.length === 0 && selectedSkillHosts.length === 0) {
-        const catalog = await loadSkillBundles(targetSchemaRoot);
         selectionManifestDigests = {
           agentProfiles: await loadAgentProfileDigest(
             options.profileManifestPath,

@@ -133,14 +133,14 @@ test("catalog inspection returns exact declared provider metadata and host modes
       url: "https://inspomcp.dev/api/mcp",
       permissions: { readOnly: true },
       auth: "none",
-      supportedHosts: ["atomic", "omp", "opencode", "pi", "senpi"],
+      supportedHosts: ["atomic", "omp", "opencode", "pi", "senpi", "omo"],
     },
     {
       name: "ui-skills",
       url: "https://www.ui-skills.com/mcp",
       permissions: { readOnly: true },
       auth: "none",
-      supportedHosts: ["atomic", "omp", "opencode", "pi", "senpi"],
+      supportedHosts: ["atomic", "omp", "opencode", "pi", "senpi", "omo"],
     },
   ]);
   expect(
@@ -151,9 +151,10 @@ test("catalog inspection returns exact declared provider metadata and host modes
     ["opencode", "config"],
     ["pi", "prerequisite-needed"],
     ["senpi", "config"],
+    ["omo", "config"],
   ]);
   expect(catalog.hosts.find(({ host }) => host === "pi")).toMatchObject({
-    prerequisite: "pi-mcp-adapter",
+    prerequisite: "verified Pi MCP mode",
     diagnostic: { code: "MCP_PI_ADAPTER_UNVERIFIED" },
   });
   await expect(
@@ -269,7 +270,35 @@ test("non-TTY flags cannot bypass install approval, and denial leaves JSONC unch
   });
 });
 
-test("Pi requires a separately installed adapter and merges its server in shared .mcp.json", async () => {
+test("Pi retains a globally registered adapter when project packages are empty", async () => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await installMockPiAdapter(agentDir);
+  await writeFile(
+    path.join(agentDir, "settings.json"),
+    JSON.stringify({
+      packages: ["npm:pi-mcp-adapter"],
+      lastChangelogVersion: "1.4.0",
+    }),
+  );
+  await mkdir(path.join(data.targetDir, ".pi"));
+  await writeFile(
+    path.join(data.targetDir, ".pi/settings.json"),
+    JSON.stringify({ packages: [] }),
+  );
+  const preview = await withPiAgentDir(agentDir, () =>
+    previewMcpInstall({
+      schemaDir: data.schemaDir,
+      targetDir: data.targetDir,
+      host: "pi",
+      providerName: "inspo",
+    }),
+  );
+  expect(preview.installMode).toBe("config");
+  expect(preview.configPath).toBe(path.join(data.targetDir, ".mcp.json"));
+});
+
+test("Pi preserves the verified legacy adapter and its project trust guard", async () => {
   const original =
     JSON.stringify(
       {
@@ -288,9 +317,8 @@ test("Pi requires a separately installed adapter and merges its server in shared
       providerName: "inspo",
     });
     expect(missing.installMode).toBe("prerequisite-needed");
-    expect(missing.prerequisite).toBe("pi-mcp-adapter");
-    expect(missing.diagnostic?.code).toBe("MCP_PI_ADAPTER_REQUIRED");
-    expect(missing.configPath).toBe(path.join(data.targetDir, ".mcp.json"));
+    expect(missing.diagnostic?.code).toBe("MCP_PI_ADAPTER_UNKNOWN");
+    expect(missing.configPath).toBeNull();
 
     let approvals = 0;
     await withTTY(true, async () => {
@@ -305,7 +333,7 @@ test("Pi requires a separately installed adapter and merges its server in shared
             return true;
           },
         }),
-      ).rejects.toMatchObject({ code: "MCP_PI_ADAPTER_REQUIRED" });
+      ).rejects.toMatchObject({ code: "MCP_PI_ADAPTER_UNKNOWN" });
     });
     expect(approvals).toBe(0);
     expect(await readFile(data.configPath!, "utf8")).toBe(original);
@@ -350,7 +378,11 @@ test("Pi requires a separately installed adapter and merges its server in shared
     // This is a disposable persisted trust decision, not simulated provider approval.
     await writeFile(
       path.join(agentDir, "settings.json"),
-      JSON.stringify({ packages: [], defaultProjectTrust: "always" }),
+      JSON.stringify({
+        packages: [],
+        defaultProjectTrust: "always",
+        lastChangelogVersion: "1.4.0",
+      }),
     );
     await writeFile(
       path.join(agentDir, "trust.json"),
@@ -562,7 +594,7 @@ test("each declared provider and host pair needs its own fresh approval", async 
   const data = await fixture();
   const agentDir = path.join(data.root, "pi-agent");
   await installMockPiAdapter(agentDir);
-  const hosts = ["atomic", "omp", "opencode", "pi", "senpi"] as const;
+  const hosts = ["atomic", "omp", "opencode", "pi", "senpi", "omo"] as const;
   const providers = ["inspo", "ui-skills"] as const;
   const confirmations: string[] = [];
 
@@ -614,6 +646,7 @@ test("each declared provider and host pair needs its own fresh approval", async 
     ".omp/mcp.json",
     "opencode.jsonc",
     ".senpi/mcp.json",
+    ".omo/mcp.json",
   ]) {
     const contents = await readFile(
       path.join(data.targetDir, configPath),
@@ -622,6 +655,306 @@ test("each declared provider and host pair needs its own fresh approval", async 
     expect(contents).toContain("inspo");
     expect(contents).toContain("ui-skills");
   }
+});
+
+test("native Pi installs into .pi/mcp.json without an adapter or root config migration", async () => {
+  const original =
+    '{"mcpServers":{"legacy":{"url":"https://legacy.example/mcp"}}}\n';
+  const data = await fixture({ relativePath: ".mcp.json", contents: original });
+  const agentDir = path.join(data.root, "pi-agent");
+  await mkdir(agentDir);
+  await writeFile(
+    path.join(agentDir, "settings.json"),
+    JSON.stringify({
+      lastChangelogVersion: "1.4.0",
+      defaultProjectTrust: "always",
+    }),
+  );
+  await withPiAgentDir(agentDir, async () => {
+    const options = {
+      schemaDir: data.schemaDir,
+      targetDir: data.targetDir,
+      host: "pi" as const,
+      providerName: "inspo",
+    };
+    const preview = await previewMcpInstall(options);
+    expect(preview.installMode).toBe("config");
+    expect(preview.prerequisite).toBeUndefined();
+    expect(preview.hostPath).toBe(path.join(data.targetDir, ".pi"));
+    expect(preview.configPath).toBe(
+      path.join(data.targetDir, ".pi", "mcp.json"),
+    );
+    const denied = await withTTY(true, () =>
+      installMcpProvider({ ...options, approve: () => false }),
+    );
+    expect(denied.status).toBe("denied");
+    await expect(readFile(preview.configPath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const installed = await withTTY(true, () =>
+      installMcpProvider({ ...options, approve: () => true }),
+    );
+    expect(installed.status).toBe("installed");
+    expect(JSON.parse(await readFile(preview.configPath!, "utf8"))).toEqual({
+      mcpServers: { inspo: { url: "https://inspomcp.dev/api/mcp" } },
+    });
+    expect(await readFile(data.configPath!, "utf8")).toBe(original);
+    expect(
+      (await inspectMcpProvider(options)).hostStatus?.find(
+        ({ host }) => host === "pi",
+      ),
+    ).toMatchObject({
+      status: "configured",
+      configured: true,
+      configPath: preview.configPath,
+    });
+    expect((await previewMcpInstall(options)).changed).toBe(false);
+  });
+});
+
+test("native Pi requires project trust and ignores an unregistered installed adapter", async () => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await installMockPiAdapter(agentDir);
+  await writeFile(
+    path.join(agentDir, "settings.json"),
+    JSON.stringify({ lastChangelogVersion: "1.4.0", packages: [] }),
+  );
+  await withPiAgentDir(agentDir, async () => {
+    const options = {
+      schemaDir: data.schemaDir,
+      targetDir: data.targetDir,
+      host: "pi" as const,
+      providerName: "inspo",
+    };
+    const preview = await previewMcpInstall(options);
+    expect(preview.configPath).toBe(
+      path.join(data.targetDir, ".pi", "mcp.json"),
+    );
+    expect(preview.diagnostic?.code).toBe("MCP_PI_PROJECT_UNTRUSTED");
+    let approvals = 0;
+    await withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: () => {
+            approvals++;
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_PI_PROJECT_UNTRUSTED" });
+    });
+    expect(approvals).toBe(0);
+    await writeFile(
+      path.join(agentDir, "trust.json"),
+      JSON.stringify({ [data.targetDir]: true }),
+    );
+    expect((await previewMcpInstall(options)).installMode).toBe("config");
+  });
+});
+
+test("Pi refuses unknown modes and custom MCP extensions before approval", async () => {
+  for (const settings of [
+    {},
+    { lastChangelogVersion: "0.98.0" },
+    { lastChangelogVersion: "1.4.0", extensions: ["-builtin:mcp"] },
+    { lastChangelogVersion: "1.4.0", extensions: ["!builtin:mcp"] },
+    { lastChangelogVersion: "1.4.0", extensions: ["!builtin:*"] },
+    { lastChangelogVersion: "1.4.0", extensions: ["./custom-mcp.ts"] },
+    { lastChangelogVersion: "1.4.0", packages: ["npm:custom-mcp"] },
+    {
+      lastChangelogVersion: "1.4.0",
+      packages: ["npm:innocent-name-with-command-override"],
+    },
+  ]) {
+    const data = await fixture();
+    const agentDir = path.join(data.root, "pi-agent");
+    await mkdir(agentDir);
+    await writeFile(
+      path.join(agentDir, "settings.json"),
+      JSON.stringify({ ...settings, defaultProjectTrust: "always" }),
+    );
+    await withPiAgentDir(agentDir, async () => {
+      const options = {
+        schemaDir: data.schemaDir,
+        targetDir: data.targetDir,
+        host: "pi" as const,
+        providerName: "inspo",
+      };
+      expect((await previewMcpInstall(options)).diagnostic?.code).toBe(
+        "MCP_PI_ADAPTER_UNKNOWN",
+      );
+      let approvals = 0;
+      await withTTY(true, async () => {
+        await expect(
+          installMcpProvider({
+            ...options,
+            approve: () => {
+              approvals++;
+              return true;
+            },
+          }),
+        ).rejects.toMatchObject({ code: "MCP_PI_ADAPTER_UNKNOWN" });
+      });
+      expect(approvals).toBe(0);
+    });
+  }
+});
+
+test("Pi detects auto-loaded extensions and mode changes during approval", async () => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await mkdir(agentDir);
+  const settingsPath = path.join(agentDir, "settings.json");
+  await writeFile(
+    settingsPath,
+    JSON.stringify({
+      extensions: ["builtin:mcp"],
+      defaultProjectTrust: "always",
+    }),
+  );
+  const options = {
+    schemaDir: data.schemaDir,
+    targetDir: data.targetDir,
+    host: "pi" as const,
+    providerName: "inspo",
+  };
+  await withPiAgentDir(agentDir, async () => {
+    expect((await previewMcpInstall(options)).installMode).toBe("config");
+    await withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await writeFile(
+              settingsPath,
+              JSON.stringify({
+                extensions: ["-builtin:mcp"],
+                defaultProjectTrust: "always",
+              }),
+            );
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+    });
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        extensions: ["builtin:mcp"],
+        defaultProjectTrust: "always",
+      }),
+    );
+    await withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await mkdir(path.join(agentDir, "extensions"));
+            await writeFile(
+              path.join(agentDir, "extensions", "unknown.ts"),
+              'pi.registerCommand("mcp", {});',
+            );
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+    });
+    expect((await previewMcpInstall(options)).diagnostic?.code).toBe(
+      "MCP_PI_ADAPTER_UNKNOWN",
+    );
+    await expect(
+      readFile(path.join(data.targetDir, ".pi", "mcp.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+test("Pi legacy entrypoint and native trust changes invalidate approval", async () => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await installMockPiAdapter(agentDir);
+  const options = {
+    schemaDir: data.schemaDir,
+    targetDir: data.targetDir,
+    host: "pi" as const,
+    providerName: "inspo",
+  };
+  await withPiAgentDir(agentDir, () =>
+    withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await writeFile(
+              path.join(
+                agentDir,
+                "npm",
+                "node_modules",
+                "pi-mcp-adapter",
+                "index.ts",
+              ),
+              "export default { changed: true };\n",
+            );
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+      await expect(
+        readFile(path.join(data.targetDir, ".mcp.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await writeFile(
+        path.join(agentDir, "settings.json"),
+        JSON.stringify({
+          lastChangelogVersion: "1.4.0",
+          defaultProjectTrust: "always",
+        }),
+      );
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await writeFile(
+              path.join(agentDir, "trust.json"),
+              JSON.stringify({ [data.targetDir]: false }),
+            );
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+      await expect(
+        readFile(path.join(data.targetDir, ".pi", "mcp.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }),
+  );
+});
+
+test("OmO uses the Senpi HTTP entry format without touching standalone Senpi", async () => {
+  const original =
+    '{"mcpServers":{"standalone":{"url":"https://senpi.example/mcp"}}}\n';
+  const data = await fixture({
+    relativePath: ".senpi/mcp.json",
+    contents: original,
+  });
+  const options = {
+    schemaDir: data.schemaDir,
+    targetDir: data.targetDir,
+    host: "omo" as const,
+    providerName: "inspo",
+  };
+  const preview = await previewMcpInstall(options);
+  expect(preview.configPath).toBe(
+    path.join(data.targetDir, ".omo", "mcp.json"),
+  );
+  const installed = await withTTY(true, () =>
+    installMcpProvider({ ...options, approve: () => true }),
+  );
+  expect(installed.status).toBe("installed");
+  expect(JSON.parse(await readFile(preview.configPath!, "utf8"))).toEqual({
+    mcpServers: {
+      inspo: { type: "http", url: "https://inspomcp.dev/api/mcp", auth: false },
+    },
+  });
+  expect(await readFile(data.configPath!, "utf8")).toBe(original);
 });
 
 test("provider approval cannot apply after its target changes", async () => {

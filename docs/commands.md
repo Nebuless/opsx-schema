@@ -96,7 +96,7 @@ doctor
 ### OpenSpec lifecycle
 
 ```text
-change create <name> --description <text> [--goal <text>] [--schema <name>] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle <declared-tier>] [--apply-token <token>]
+change create <name> --description <text> [--goal <text>] [--schema <name>] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle <declared-tier>] [--apply-token <token>]
 change status <change>
 change instructions <change> <artifact>
 change validate <change>
@@ -111,7 +111,7 @@ OpenSpec remains authoritative for change identity and lifecycle state, schema r
 ### Schema installation, validation and switching
 
 ```text
-schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle <declared-tier>] [--migrate <change> ...] [--apply-token <token>]
+schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle <declared-tier>] [--migrate <change> ...] [--apply-token <token>]
 schemas bundled [name]
 schemas install <bundled-schema-name> --project <root> [--as <distinct-name>] [--apply-token <token>]
 schemas validate [name]
@@ -121,7 +121,7 @@ verify
 - `schemas bundled [name]` lists or inspects packaged schemas and works outside a project.
 - `schemas install` installs a named bundled source into the explicit project. The argument is a catalog name, not a filesystem path. Use one `--project <root>` per command. Use `--as` to give a second revision a distinct OpenSpec schema ID; a same-name revision cannot silently replace a pinned schema. The preview identifies both source and destination and refuses unsafe or changed targets. Installation does not switch the project default.
 - `schemas validate [name]` asks OpenSpec to resolve and validate the project schema or a specified schema available to OpenSpec. A bundled schema must be installed before OpenSpec can resolve it by name.
-- `schema switch` changes the project default. Repeated `--profile` options select named agent profiles; repeated `--skill-host` options select separate native skill roots for OpenCode, OMP, Pi, Atomic and Senpi. `--bundle` selects a tier declared by that schema; available tiers vary by schema. For example, `compound-intent-driven` declares 11 skills in `default`, but does not declare `recommended` or `all`. An unavailable tier is refused, never substituted. Each proposed target, trust requirement and shared destination appears in the guarded preview. Repeated `--migrate` options select active changes for compatible, validated migration; completed and archived changes are not migration targets. Existing skills are retained; MCP installation is never implicit.
+- `schema switch` changes the project default. Repeated `--profile` options select named agent profiles; repeated `--skill-host` options select separate native skill roots for OpenCode, OMP, Pi, Atomic, Senpi and OmO. `--bundle` selects a tier declared by that schema; available tiers vary by schema. For example, `compound-intent-driven` declares 11 skills in `default`, but does not declare `recommended` or `all`. An unavailable tier is refused, never substituted. Each proposed target, trust requirement and shared destination appears in the guarded preview. Repeated `--migrate` options select active changes for compatible, validated migration; completed and archived changes are not migration targets. Existing skills are retained; MCP installation is never implicit.
 - `change create` records the exact schema revision, named profiles, native skill hosts and bundle in the change receipt. It uses an explicitly supplied selection or a matching verified switch selection; it does not guess installed hosts from files. For a schema declaring skills, absent or unverified selection blocks creation. A schema without declared skills can be created without host selection.
 - `verify` runs aggregate OpenSpec-schema, active-change, skill and MCP checks. It identifies the failing component and change. Unknown historical creation provenance remains a blocking failure even when current schema, skill and MCP checks pass; it is not evidence that a new installation is corrupt. Current-schema validation does not prove a change's historical creation revision. Inspect command adapters separately with `adapters inspect`; adapter state is not implied by `verify` or skill installation. `skills reconcile` can record an explicitly reviewed exact current revision and selection when evidence permits, but does not invent creation history; `created: null` / Unknown history stays unknown. A missing or drifted revision or unproven selection still blocks reconciliation.
 
@@ -130,8 +130,8 @@ verify
 ```text
 skills inspect [schema] [--bundle <declared-tier>]
 skills doctor
-skills reconcile <change> --revision-digest <sha256> --bundle <declared-tier> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--apply-token <token>]
-skills install [schema] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle <declared-tier>] [--apply-token <token>]
+skills reconcile <change> --revision-digest <sha256> --bundle <declared-tier> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--apply-token <token>]
+skills install [schema] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle <declared-tier>] [--apply-token <token>]
 skills replace <project-relative-target> --schema <installed-name> --bundle <declared-tier> --backup-id <unique-id> [--apply-token <token>]
 skills replace inspect <backup-id>
 skills restore <backup-id> [--apply-token <token>]
@@ -148,7 +148,7 @@ The shipped `opsx-schema.json` manifest defines these profile IDs and skill root
 | `gemini-cli` | Gemini CLI | `.gemini/skills` |
 | `opencode` | OpenCode | `.agents/skills` |
 
-The CLI uses the profile manifest shipped with the package and rejects IDs that are not declared there. Native skill hosts are a separate selection: OpenCode `.opencode/skills`, OMP `.omp/skills`, Pi `.pi/skills`, Atomic `.atomic/skills`, and Senpi `.senpi/skills`. `default`, `recommended` and `all` are possible schema-declared skill tiers, not agent profiles or host checkboxes; each schema exposes only tiers it declares. `skills inspect` lists available tiers and their declaration counts. For example, `compound-intent-driven` has 11 skills in `default` and no `recommended` or `all` tier. An invalid bundle is not replaced with another tier; a bundle diagnostic names the selected schema and its actually available tiers. Profile errors remain distinct. Codex and the named OpenCode profile share `.agents/skills`; a native OpenCode host does not share that root. Shared writes are deduplicated and identified in previews. Skill disable is a separate guarded action; it refuses unsafe, modified, shared or currently pinned resources rather than force-removing them. A legacy active pin whose exact profile/bundle/host association cannot be proven is treated as required/unknown, not safe to delete.
+The CLI uses the profile manifest shipped with the package and rejects IDs that are not declared there. Native skill hosts are a separate selection: OpenCode `.opencode/skills`, OMP `.omp/skills`, Pi `.pi/skills`, Atomic `.atomic/skills`, Senpi `.senpi/skills`, and OmO `.omo/skills`. `default`, `recommended` and `all` are possible schema-declared skill tiers, not agent profiles or host checkboxes; each schema exposes only tiers it declares. `skills inspect` lists available tiers and their declaration counts. For example, `compound-intent-driven` has 11 skills in `default` and no `recommended` or `all` tier. An invalid bundle is not replaced with another tier; a bundle diagnostic names the selected schema and its actually available tiers. Profile errors remain distinct. Codex and the named OpenCode profile share `.agents/skills`; a native OpenCode host does not share that root. Shared writes are deduplicated and identified in previews. Skill disable is a separate guarded action; it refuses unsafe, modified, shared or currently pinned resources rather than force-removing them. A legacy active pin whose exact profile/bundle/host association cannot be proven is treated as required/unknown, not safe to delete.
 
 To reconcile a pre-existing active change without a recorded selection, inspect its schema pin and choose the exact effective revision SHA-256, named profile(s), native host(s), and bundle. `skills reconcile` previews that exact change, revision, and selection, then requires its matching apply token. It records the reviewed association without inventing the historical creation revision; a no-skills selection is valid only when the schema declares no skills. A stale pin, changed manifest, conflicting association or unknown selection fails closed. Re-run `skills doctor` and inspect `changes <name>` after Apply. Reconciliation does not install skills or providers.
 
@@ -176,12 +176,14 @@ For the complete OMP sequence, fresh-token examples, separate adapter checks, an
 
 `skills inspect` reads the bundled schema declarations and the package's local profile manifest; it is a read-only catalog and does not fetch GitHub skill repositories. `skills install` may fetch schema-declared external GitHub skill repository content while preparing its preview. The schema's `skills.txt` catalog and packaged host assets do not imply that all external skill payloads are bundled or installed offline.
 
+For `intent-driven-design`, `required-skills.txt` makes Impeccable mandatory. Schema installation and switching include its skill preview and install it before success, defaulting to shared `.agents/skills` when no destination is selected. Only Inspo and UI Skills MCP additions are optional. Skill declarations may include a third tab-separated immutable commit field. Skill installation does not register helper agents or automatic hooks.
+
 ### MCP provider inspection and installation
 
 ```text
 mcp list [--schema <name>] [--target-dir <dir>]
 mcp inspect <provider> [--schema <name>] [--target-dir <dir>]
-mcp install <provider> --host atomic|omp|opencode|pi|senpi [--schema <name>] [--target-dir <dir>] [--apply-token <token>]
+mcp install <provider> --host atomic|omp|opencode|pi|senpi|omo [--schema <name>] [--target-dir <dir>] [--apply-token <token>]
 ```
 
 Only explicitly declared, valid schema catalog providers can be selected. Catalog entries must use HTTPS, declare `readOnly: true` and `auth: none`; unknown, unsafe or ambiguous configuration is refused. `mcp list` and `mcp inspect` are reads and require a catalog in the resolved project schema; without one they return a nonzero error envelope such as `MCP_CATALOG_NOT_FOUND`.
@@ -197,10 +199,11 @@ Installation previews the provider URL/safety metadata, selected host, target pa
 | `atomic` | `<target-dir>/.mcp.json`, `mcpServers` entries | Native config write after approval. |
 | `omp` | `<target-dir>/.omp/mcp.json`, `mcpServers` entries | Native config write after approval. |
 | `opencode` | Existing `opencode.json[c]` or `.opencode/opencode.json[c]`; otherwise `opencode.jsonc`. Uses `mcp` entries. | Native config write after approval; ambiguous existing candidates are refused. |
-| `pi` | `<target-dir>/.mcp.json`, `mcpServers` entries (shared with Atomic) | Configurable only when the separately installed `pi-mcp-adapter` package and entrypoint are present under Pi's agent directory and a matching extension is registered in Pi settings. Discovery never installs that extension. Preview/Apply refuse without it; the shared file is ownership-aware and unrelated entries are preserved. |
+| `pi` | Native `.pi/mcp.json`; verified legacy adapter `.mcp.json`, `mcpServers` entries | Inspects mode and project trust without installing or migrating adapters. Unknown mode is refused. |
+| `omo` | `<target-dir>/.omo/mcp.json`, `mcpServers` entries with `{type: "http", url, auth: false}` | Branded OmO target, distinct from standalone Senpi. |
 | `senpi` | `<target-dir>/.senpi/mcp.json`, `mcpServers` entries with `{type: "http", url, auth: false}` | Native HTTP config write after approval for unauthenticated HTTPS catalog providers; other transports/auth are refused. |
 
-For Pi, the prerequisite is a matching `npm:pi-mcp-adapter[@version]` extension entry in a trusted project or global Pi `settings.json` plus the installed package manifest and extension entrypoint under `$PI_CODING_AGENT_DIR/npm/node_modules/pi-mcp-adapter` (default Pi agent directory under `~/.pi/agent`). Install and trust that third-party extension separately; this CLI neither installs it nor interprets its runtime health as proven by a local file check.
+For legacy adapter-backed Pi, the prerequisite is a matching `npm:pi-mcp-adapter[@version]` entry in trusted project or global Pi settings plus the installed package and extension entrypoint under `$PI_CODING_AGENT_DIR/npm/node_modules/pi-mcp-adapter` (default `~/.pi/agent`). Do not install an adapter merely to satisfy this installer. Native Pi uses built-in MCP with inspected version and trusted project settings. Ambiguous custom extensions and changed host evidence fail closed. Existing adapter registrations remain unchanged. Local checks do not prove runtime connectivity.
 
 MCP Apply fails closed without a usable TTY and fresh, explicit typed human approval of the provider safety metadata and exact selected host/path/diff. A preview token alone, `--json`, `--yes`, or agent confirmation is not that approval. Schema switching never installs MCP implicitly.
 
@@ -234,7 +237,7 @@ An absolute-only legacy source can be explicitly reviewed when its old location 
 The warning does not authenticate the old location. Review the exact current target and copy the complete confirmation text and fresh token from the preview. Apply uses both on the same command:
 
 ```sh
-opsx-schema --project <root> --json change re-pin <change> <same-schema-name> [--bundle default|recommended|all] [--profile <agent-id> ... | --no-profiles] [--skill-host opencode|omp|pi|atomic|senpi ...]
+opsx-schema --project <root> --json change re-pin <change> <same-schema-name> [--bundle default|recommended|all] [--profile <agent-id> ... | --no-profiles] [--skill-host opencode|omp|pi|atomic|senpi|omo ...]
 opsx-schema --project <root> --json change re-pin <change> <same-schema-name> [same selection] --apply-token <preview-token> --confirm <exact-confirmation-text>
 ```
 

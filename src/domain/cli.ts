@@ -47,7 +47,7 @@ Change lifecycle (mutations preview by default):
     --recover inspects an exact pending journal without mutation. Recovery Apply requires the separate fresh recovery token and exact confirmation text.
 
 Schemas and profiles:
-  schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--migrate <change> ...] [--apply-token <token>]
+  schema switch <name> [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle default|recommended|all] [--migrate <change> ...] [--apply-token <token>]
   schemas bundled [name]             List or inspect bundled schema assets (works outside projects)
   schemas install <bundled-schema-name> --project <root> [--as <distinct-name>] [--apply-token <token>]
     Install packaged schema files only; does not activate the project default or install skills/adapters.
@@ -56,9 +56,9 @@ Schemas and profiles:
 Skills (profile selects named agent; bundle selects declared skill tier):
   skills inspect [schema] [--bundle default|recommended|all]
   skills doctor
-  skills install [schema] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--bundle default|recommended|all] [--apply-token <token>]
+  skills install [schema] [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--bundle default|recommended|all] [--apply-token <token>]
     Install the selected declared skill tier; use schema switch to activate project default and skills together.
-  skills reconcile <change> --revision-digest <sha256> --bundle default|recommended|all [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi ...] [--apply-token <token>]
+  skills reconcile <change> --revision-digest <sha256> --bundle default|recommended|all [--profile <agent-id> ...] [--skill-host opencode|omp|pi|atomic|senpi|omo ...] [--apply-token <token>]
   skills replace <project-relative-target> --schema <installed-name> --bundle default|recommended|all --backup-id <unique-id> [--apply-token <token>]
   skills replace inspect <backup-id>
   skills restore <backup-id> [--apply-token <token>]

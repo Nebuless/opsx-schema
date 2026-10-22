@@ -13,6 +13,7 @@ Each directory owns a project-local schema contract and resources. This parent o
 - Keep schema files internally consistent with declared artifact paths and gates.
 - Keep host projections separate from canonical adapter sources.
 - Preserve existing adapter parity requirements.
+- Keep intent-driven-design's required Impeccable declaration, immutable skill revisions, and host guidance aligned with its packaged counterpart. Only Inspo and UI Skills MCP additions are optional installation choices.
 
 ## Work Guidance
 

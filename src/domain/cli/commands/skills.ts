@@ -266,7 +266,7 @@ async function reconcileSkillPin(
       target,
       association,
       confirmation: {
-        exactTarget: `${change} pinned to ${revision.name}@${digest}; profiles ${association.profiles.join(", ") || "none"}; hosts ${association.skillHosts.join(", ") || "none"}; bundle ${bundle}`,
+        exactTarget: `${change} pinned to ${revision.name}@${digest}; profiles ${association.profiles.join(", �") || "none"}; hosts ${association.skillHosts.join(", �") || "none"}; bundle ${bundle}`,
         token,
       },
     };
@@ -341,7 +341,7 @@ export async function commandSkills(
     )
       throw new OpsxError(
         "USAGE",
-        "Select each supported native host at most once: opencode, omp, pi, atomic, senpi.",
+        "Select each supported native host at most once: opencode, omp, pi, atomic, senpi, omo.",
       );
     const profiles = many(parsed, "--profile");
     if (new Set(profiles).size !== profiles.length)
@@ -371,18 +371,13 @@ export async function commandSkills(
     );
     const selectedProfiles = many(parsed, "--profile");
     const selectedHosts = many(parsed, "--skill-host");
-    if (selectedProfiles.length === 0 && selectedHosts.length === 0)
-      throw new OpsxError(
-        "USAGE",
-        "skills install requires a --profile or --skill-host; see skills inspect.",
-      );
     if (
       new Set(selectedHosts).size !== selectedHosts.length ||
       selectedHosts.some((host) => !isSkillInstallHostId(host))
     )
       throw new OpsxError(
         "USAGE",
-        "--skill-host must select each supported host at most once: opencode, omp, pi, atomic, senpi.",
+        "--skill-host must select each supported host at most once: opencode, omp, pi, atomic, senpi, omo.",
       );
     const name = parsed.positionals[0] ?? (await defaultSchema(root));
     const manifest = await resources(new OpenSpecClient(root), name);

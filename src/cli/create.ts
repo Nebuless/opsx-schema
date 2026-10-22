@@ -16,6 +16,7 @@ import { resolveRevision, retainRevision } from "../revisions/index.ts";
 import type { Revision, RevisionRef } from "../revisions/index.ts";
 import {
   assertSkillBundleDeclared,
+  defaultSkillProfiles,
   loadAgentProfileDigest,
   loadSkillBundles,
   previewSkillInstall,
@@ -108,6 +109,11 @@ async function verifiedSelection(
           skillHosts: [...(explicit.skillHosts ?? [])],
           skillBundle: selectedBundle,
         };
+  selection.profiles = await defaultSkillProfiles(
+    revision.source,
+    selection.profiles,
+    selection.skillHosts,
+  );
   const manifestDigests = {
     agentProfiles: await loadAgentProfileDigest(),
     schemaSkills: catalog.manifestDigests.skills,

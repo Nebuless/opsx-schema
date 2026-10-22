@@ -40,6 +40,7 @@ export const SKILL_INSTALL_HOST_IDS = [
   "pi",
   "atomic",
   "senpi",
+  "omo",
 ] as const;
 export type SkillInstallHostId = (typeof SKILL_INSTALL_HOST_IDS)[number];
 
@@ -71,6 +72,7 @@ const SKILL_HOST_CONTRACTS = {
     relativeDestination: ".senpi/skills",
     trust: "external",
   },
+  omo: { label: "OmO", relativeDestination: ".omo/skills", trust: "external" },
 } as const satisfies Record<SkillInstallHostId, SkillHostContract>;
 const SKILL_INSTALL_HOST_ID_SET: ReadonlySet<string> = new Set(
   SKILL_INSTALL_HOST_IDS,
@@ -106,6 +108,7 @@ export interface AgentProfile {
 
 export interface SkillDeclaration {
   readonly repository: string;
+  readonly revision?: string;
   /** Complete skill directory, relative to the source repository root. */
   readonly path: string;
   readonly skill: string;
@@ -152,7 +155,7 @@ function skillBundleCatalogFromResolved(
   > = {};
   for (const bundle of SKILL_BUNDLE_ORDER) {
     const entries = resolved.get(bundle);
-    if (entries) declarations[bundle] = entries;
+    if (entries) declarations[bundle] = mergeRequiredSkills(manifest, entries);
   }
   return freeze({
     bundles: SKILL_BUNDLE_ORDER.filter((bundle) => resolved.has(bundle)),
@@ -175,14 +178,14 @@ export function assertSkillBundleDeclared(
       .flatMap((declarations) => declarations ?? [])
       .map(
         (declaration) =>
-          `${skillTarget(declaration)}\0${declaration.repository}\0${declaration.path}`,
+          `${skillTarget(declaration)}\0${declaration.repository}\0${declaration.path}\0${declaration.revision ?? ""}`,
       ),
   );
   const defaultDeclarations = catalog.declarations.default;
   const defaultTargets = new Set(
     (defaultDeclarations ?? []).map(
       (declaration) =>
-        `${skillTarget(declaration)}\0${declaration.repository}\0${declaration.path}`,
+        `${skillTarget(declaration)}\0${declaration.repository}\0${declaration.path}\0${declaration.revision ?? ""}`,
     ),
   );
   const defaultContainsAll =
@@ -444,6 +447,7 @@ interface SourceBundle {
 
 interface SchemaSkillManifest {
   readonly text: string;
+  readonly requiredText: string;
   readonly digest: string;
   readonly bundleText: string | null;
   readonly bundleDigest: string | null;
@@ -657,15 +661,22 @@ export function parseSkillsManifest(text: string): SkillDeclaration[] {
     if (!line || line.startsWith("#")) continue;
     let repository: string;
     let sourcePath: string;
+    let revision: string | undefined;
     if (line.includes("\t")) {
       const fields = line.split("\t");
-      if (fields.length !== 2)
+      if (fields.length !== 2 && fields.length !== 3)
         fail(
           "RESOURCE_MANIFEST_INVALID",
           `Malformed skills.txt declaration: ${line}`,
         );
       repository = fields[0]!.trim();
       sourcePath = fields[1]!.trim();
+      revision = fields[2]?.trim();
+      if (revision !== undefined && !/^[a-f0-9]{40}$/.test(revision))
+        fail(
+          "RESOURCE_MANIFEST_INVALID",
+          `Skill revision must be an immutable commit: ${line}`,
+        );
     } else {
       if (!safeName(line))
         fail(
@@ -693,7 +704,12 @@ export function parseSkillsManifest(text: string): SkillDeclaration[] {
         `Duplicate skill destination: ${skill}`,
       );
     seen.add(skill);
-    declarations.push({ repository, path: sourcePath, skill });
+    declarations.push({
+      repository,
+      path: sourcePath,
+      skill,
+      ...(revision ? { revision } : {}),
+    });
   }
   return declarations;
 }
@@ -711,7 +727,9 @@ function skillTarget(skill: SkillDeclaration): string {
 function parseBundleResource(value: unknown, bundle: string): SkillDeclaration {
   if (
     !isRecord(value) ||
-    Object.keys(value).some((key) => key !== "source" && key !== "path")
+    Object.keys(value).some(
+      (key) => key !== "source" && key !== "path" && key !== "revision",
+    )
   ) {
     fail(
       "RESOURCE_BUNDLE_MANIFEST_INVALID",
@@ -720,11 +738,14 @@ function parseBundleResource(value: unknown, bundle: string): SkillDeclaration {
   }
   const repository = value.source;
   const sourcePath = value.path;
+  const revision = value.revision;
   if (
     typeof repository !== "string" ||
     !safeRepository(repository) ||
     typeof sourcePath !== "string" ||
-    !safeRelative(sourcePath)
+    !safeRelative(sourcePath) ||
+    (revision !== undefined &&
+      (typeof revision !== "string" || !/^[a-f0-9]{40}$/.test(revision)))
   ) {
     fail(
       "RESOURCE_BUNDLE_MANIFEST_INVALID",
@@ -737,7 +758,12 @@ function parseBundleResource(value: unknown, bundle: string): SkillDeclaration {
       "RESOURCE_BUNDLE_MANIFEST_INVALID",
       "Unsafe skill destination in bundle " + bundle + ": " + skill,
     );
-  return { repository, path: sourcePath, skill };
+  return {
+    repository,
+    path: sourcePath,
+    skill,
+    ...(typeof revision === "string" ? { revision } : {}),
+  };
 }
 
 function resolveSkillBundles(
@@ -835,7 +861,9 @@ function resolveSkillBundles(
       const prior = byTarget.get(target);
       if (
         prior &&
-        (prior.repository !== entry.repository || prior.path !== entry.path)
+        (prior.repository !== entry.repository ||
+          prior.path !== entry.path ||
+          prior.revision !== entry.revision)
       ) {
         fail(
           "RESOURCE_TARGET_AMBIGUOUS",
@@ -874,7 +902,54 @@ function declarationsForBundle(
   const resolved = resolveSkillBundles(manifest.text, manifest.bundleText);
   const catalog = skillBundleCatalogFromResolved(manifest, resolved);
   assertSkillBundleDeclared(catalog, schemaName, bundle);
-  return resolved.get(bundle)!;
+  return catalog.declarations[bundle]!;
+}
+
+function mergeRequiredSkills(
+  manifest: SchemaSkillManifest,
+  declarations: readonly SkillDeclaration[],
+): SkillDeclaration[] {
+  const required = parseSkillsManifest(manifest.requiredText);
+  const bySkill = new Map(required.map((entry) => [entry.skill, entry]));
+  for (const entry of declarations) {
+    const existing = bySkill.get(entry.skill);
+    if (
+      existing &&
+      (existing.repository !== entry.repository ||
+        existing.path !== entry.path ||
+        existing.revision !== entry.revision)
+    )
+      fail(
+        "RESOURCE_TARGET_AMBIGUOUS",
+        `Required skill differs from selected bundle: ${entry.skill}`,
+      );
+    bySkill.set(entry.skill, entry);
+  }
+  return [...bySkill.values()];
+}
+
+export async function defaultSkillProfiles(
+  schemaRoot: string,
+  profiles: readonly string[],
+  hosts: readonly SkillInstallHostId[],
+  manifestPath?: string,
+): Promise<string[]> {
+  if (
+    profiles.length ||
+    hosts.length ||
+    !parseSkillsManifest((await readSchemaManifest(schemaRoot)).requiredText)
+      .length
+  )
+    return [...profiles];
+  const shared = (await loadAgentProfiles(manifestPath)).find(
+    (profile) => profile.target === ".agents/skills",
+  );
+  if (!shared)
+    fail(
+      "PROFILE_SELECTION_INVALID",
+      "Required schema skills need a shared .agents/skills profile or explicit host selection.",
+    );
+  return [shared.id];
 }
 
 interface LocalPinScan {
@@ -1402,6 +1477,16 @@ async function readSchemaManifest(
       "Schema skills.txt is not a regular file: " + manifest,
     );
   const text = info ? await readFile(manifest, "utf8") : "";
+  const requiredManifest = path.join(schemaRoot, "required-skills.txt");
+  const requiredInfo = await lstatOrNull(requiredManifest);
+  if (requiredInfo && (requiredInfo.isSymbolicLink() || !requiredInfo.isFile()))
+    fail(
+      "RESOURCE_MANIFEST_UNSAFE",
+      "Schema required-skills.txt is not a regular file.",
+    );
+  const requiredText = requiredInfo
+    ? await readFile(requiredManifest, "utf8")
+    : "";
   const bundleManifest = path.join(schemaRoot, "skill-profiles.yaml");
   const bundleInfo = await lstatOrNull(bundleManifest);
   if (bundleInfo && (bundleInfo.isSymbolicLink() || !bundleInfo.isFile())) {
@@ -1413,7 +1498,8 @@ async function readSchemaManifest(
   const bundleText = bundleInfo ? await readFile(bundleManifest, "utf8") : null;
   return {
     text,
-    digest: sha256(text),
+    requiredText,
+    digest: sha256(requiredInfo ? JSON.stringify([text, requiredText]) : text),
     bundleText,
     bundleDigest: bundleText === null ? null : sha256(bundleText),
   };
@@ -1688,6 +1774,17 @@ async function acquireSources(
   }
   try {
     for (const repository of repositories) {
+      const revisions = new Set(
+        declarations
+          .filter((entry) => entry.repository === repository)
+          .map((entry) => entry.revision),
+      );
+      if (revisions.size !== 1)
+        fail(
+          "RESOURCE_SOURCE_INVALID",
+          `Conflicting skill revisions for ${repository}.`,
+        );
+      const revision = [...revisions][0];
       const fixture = options.sourceRoots?.[repository];
       if (fixture) {
         roots.set(
@@ -1697,6 +1794,14 @@ async function acquireSources(
         continue;
       }
       const destination = path.join(temporaryRoot!, `repo-${roots.size}`);
+      const gitEnvironment = {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: path.join(temporaryRoot!, "home"),
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+        GIT_CONFIG_COUNT: "0",
+      };
       const result = spawnSync(
         "git",
         [
@@ -1712,15 +1817,7 @@ async function acquireSources(
           encoding: "utf8",
           timeout: 60_000,
           maxBuffer: 1024 * 1024,
-          env: {
-            PATH: process.env.PATH ?? "/usr/bin:/bin",
-            HOME: path.join(temporaryRoot!, "home"),
-            GIT_TERMINAL_PROMPT: "0",
-            GIT_CONFIG_NOSYSTEM: "1",
-            GIT_CONFIG_GLOBAL:
-              process.platform === "win32" ? "NUL" : "/dev/null",
-            GIT_CONFIG_COUNT: "0",
-          },
+          env: gitEnvironment,
         },
       );
       if (result.error || result.status !== 0)
@@ -1728,6 +1825,38 @@ async function acquireSources(
           "RESOURCE_SOURCE_UNAVAILABLE",
           `Could not acquire skill source ${repository}.`,
         );
+      if (revision) {
+        const fetch = spawnSync(
+          "git",
+          ["-C", destination, "fetch", "--depth", "1", "origin", revision],
+          {
+            encoding: "utf8",
+            timeout: 60_000,
+            maxBuffer: 1024 * 1024,
+            env: gitEnvironment,
+          },
+        );
+        if (fetch.error || fetch.status !== 0)
+          fail(
+            "RESOURCE_SOURCE_UNAVAILABLE",
+            `Could not acquire reviewed revision ${repository}@${revision}.`,
+          );
+        const checkout = spawnSync(
+          "git",
+          ["-C", destination, "checkout", "--detach", revision],
+          {
+            encoding: "utf8",
+            timeout: 60_000,
+            maxBuffer: 1024 * 1024,
+            env: gitEnvironment,
+          },
+        );
+        if (checkout.error || checkout.status !== 0)
+          fail(
+            "RESOURCE_SOURCE_UNAVAILABLE",
+            `Could not select reviewed revision ${repository}@${revision}.`,
+          );
+      }
       roots.set(
         repository,
         await resolveDirectory(destination, "RESOURCE_SOURCE_UNSAFE"),
@@ -1885,17 +2014,23 @@ async function normalizeInstallRequest(
       "SKILL_HOST_SELECTION_INVALID",
       "Skill-host selection must contain unique hosts.",
     );
-  if (input.profiles.length === 0 && skillHosts.length === 0)
+  const profileManifestPath = profileManifestPathFn(
+    options.profileManifestPath,
+  );
+  const selectedProfiles = await defaultSkillProfiles(
+    schemaRoot,
+    input.profiles,
+    skillHosts,
+    profileManifestPath,
+  );
+  if (selectedProfiles.length === 0 && skillHosts.length === 0)
     fail(
       "PROFILE_SELECTION_INVALID",
       "Select at least one agent profile or skill host.",
     );
-  const profileManifestPath = profileManifestPathFn(
-    options.profileManifestPath,
-  );
-  const profiles = [...new Set(input.profiles)].sort();
+  const profiles = [...new Set(selectedProfiles)].sort();
   if (
-    profiles.length !== input.profiles.length ||
+    profiles.length !== selectedProfiles.length ||
     profiles.some(
       (profile) => typeof profile !== "string" || !safeName(profile),
     )

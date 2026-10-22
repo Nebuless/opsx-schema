@@ -401,6 +401,7 @@ test("one packed opsx-schema install carries and uses its bundled resources", as
             repository: string;
             path: string;
             skill: string;
+            revision?: string;
           }>;
         }>;
         agentProfiles: Array<{ id: string; label: string; target: string }>;
@@ -420,13 +421,17 @@ test("one packed opsx-schema install carries and uses its bundled resources", as
       repository: "pbakaus/impeccable",
       path: ".agents/skills/impeccable",
       skill: "impeccable",
+      revision: "aeeb3d8c30b5f95aeeb3e893b0f1a308af8fdb8f",
     });
     expect(skillsEnvelope.data.agentProfiles).toContainEqual(
       expect.objectContaining({ id: "codex", target: ".agents/skills" }),
     );
-    expect(
-      await isPresent(path.join(projectDirectory, ".agents", "skills")),
-    ).toBe(false);
+    await access(
+      path.join(projectDirectory, ".agents/skills/impeccable/SKILL.md"),
+    );
+    for (const config of [".mcp.json", ".omo/mcp.json", ".pi/mcp.json"]) {
+      expect(await isPresent(path.join(projectDirectory, config))).toBe(false);
+    }
 
     const mcpList = await run(
       [

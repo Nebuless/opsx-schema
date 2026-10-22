@@ -195,7 +195,7 @@
       ]
     },
     "intent-driven-design": {
-      "digest": "af3c600af0815002f67b786ad5636edf75037e61f334572eb88fe224d2b2f953",
+      "digest": "da88890ceff5a28cfd17f3b2a903f132ceac7364abb10725cebfe8adeedbd7ed",
       "files": [
         {
           "path": "mcp.yaml",
@@ -203,15 +203,19 @@
         },
         {
           "path": "README.md",
-          "sha256": "099d4a267861bb012f3afdc492db711fce12ac8d22ac5ec5418befc94cba3b8c"
+          "sha256": "3568c1a45bd5a12b8ef22a10fe9f2d402729c4781b78e8dd827e373e0d50ecc1"
+        },
+        {
+          "path": "required-skills.txt",
+          "sha256": "e8068709a87673bbf29e5044ee29d6efd7027254159bb5ce6fde3a1e92987314"
         },
         {
           "path": "schema.yaml",
-          "sha256": "abd65febd47665a8b38893c412a0354aaa1da4e4a8aac391f50eeceedf89d495"
+          "sha256": "129502ff8be7d0bdeecefcbd2872ee80aedeab0b0f05c38a08c2837484dba405"
         },
         {
           "path": "skills.txt",
-          "sha256": "ca397f8640d0e6bf9fdf25c965b744e83cc3c0928cbee572d1823b847b1ac033"
+          "sha256": "31a004890b04571c978b4cc3a32d91491a99e3586887cb6639c46bed99609a76"
         },
         {
           "path": "templates/adr.md",

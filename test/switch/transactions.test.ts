@@ -30,7 +30,12 @@ import {
 import type { ChangeSelectionAssociation } from "../../src/provenance/index.ts";
 import { resolveRevision, retainRevision } from "../../src/revisions/index.ts";
 import type { RevisionRef } from "../../src/revisions/index.ts";
-import { apply, inspectRecovery, preview } from "../../src/switch/index.ts";
+import {
+  apply,
+  inspectRecovery,
+  preview,
+  readSelectionReceipt,
+} from "../../src/switch/index.ts";
 import { assertNoIncompleteSwitchRecovery } from "../../src/switch/recovery.ts";
 import type { SkillInstallHostId } from "../../src/resources/index.ts";
 
@@ -215,6 +220,54 @@ async function writeSwitchJournal(
     }),
   );
 }
+
+test("required schema skills install before default activation without a selected destination", async () => {
+  const { root, sources } = await fixture();
+  const schemaRoot = path.join(root, "openspec/schemas/legacy-schema");
+  await writeFile(
+    path.join(schemaRoot, "required-skills.txt"),
+    "openspec-git-discipline\n",
+  );
+  const selected = { schema: "legacy-schema", profiles: [], migrations: [] };
+  const options = { sourceRoots: sourceRoots(sources) };
+  const reviewed = await preview(root, selected, options);
+  expect(reviewed.canApply, JSON.stringify(reviewed.diagnostics)).toBe(true);
+  expect(reviewed.profiles.targets).toMatchObject([
+    {
+      relativeTarget: ".agents/skills/openspec-git-discipline",
+      action: "install",
+    },
+  ]);
+  const result = await apply(root, selected, reviewed.token, options);
+  expect(result.status).toBe("applied");
+  expect(
+    await readFile(
+      path.join(root, ".agents/skills/openspec-git-discipline/SKILL.md"),
+      "utf8",
+    ),
+  ).toContain("Fixture skill");
+  expect(await config(root)).toContain("schema: legacy-schema");
+  expect((await readSelectionReceipt(root))?.profiles).toEqual(
+    reviewed.request.profiles,
+  );
+});
+
+test("required manifest edits stale switch tokens before config activation", async () => {
+  const { root, sources } = await fixture();
+  const manifest = path.join(
+    root,
+    "openspec/schemas/legacy-schema/required-skills.txt",
+  );
+  await writeFile(manifest, "openspec-git-discipline\n");
+  const selected = { schema: "legacy-schema", profiles: [], migrations: [] };
+  const options = { sourceRoots: sourceRoots(sources) };
+  const reviewed = await preview(root, selected, options);
+  await writeFile(manifest, "# changed\nopenspec-git-discipline\n");
+  await expect(
+    apply(root, selected, reviewed.token, options),
+  ).rejects.toMatchObject({ code: "SWITCH_STALE" });
+  expect(await config(root)).toBe("schema: spec-driven\n");
+});
 
 test("switch recovery guard blocks only overlapping incomplete targets", async () => {
   const { root } = await fixture();
@@ -769,6 +822,7 @@ test("switch host selection is canonical and rejects unknown or duplicate ids", 
   expect(reviewed.request.skillHosts).toEqual(["atomic", "omp"]);
   expect(reviewed.skillHosts.map((host) => host.host).sort()).toEqual([
     "atomic",
+    "omo",
     "omp",
     "opencode",
     "pi",

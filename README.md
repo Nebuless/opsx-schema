@@ -38,6 +38,8 @@ bunx opsx-schema change archive account-export
 
 Commands that change files **preview only** on the first run. Review the preview, then repeat the same command with its fresh `--apply-token <token>` to apply. Installation and switching are separate steps; installing a schema does not select it. The archive example also needs its preview token before it changes anything.
 
+`intent-driven-design` installs required Impeccable by default, using shared `.agents/skills` when no skill destination is selected. Native OmO uses `.omo/skills`, separate from standalone Senpi. Only the Inspo and UI Skills MCP additions are optional. MCP setup is separate and requires interactive approval of the exact provider, host, path, and diff. Pi setup distinguishes built-in native MCP from an already installed legacy adapter without installing or migrating one.
+
 See [workflows and schema choices](./docs/workflows.md) for all command families, what each schema is for, and a start-to-finish CLI path. The [command reference](./docs/commands.md) covers flags, output and approval rules. Contributors: [resource overview](./resources/README.md) and [contribution guide](./resources/CONTRIBUTING.md).
 
 For maintainers, [the manual npm release guide](./docs/npm-release.md) covers dry runs and the guarded publication flow. A successful verified npm release creates a GitHub Release from the curated changelog entry. Version 0.4.0 adds portable project-local schema pins across linked worktrees and reviewed re-pin with crash recovery. See the [v0.4.0 release](https://github.com/Nebuless/opsx-schema/releases/tag/v0.4.0).
