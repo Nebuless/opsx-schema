@@ -23,6 +23,7 @@ import {
   assertSkillBundleDeclared,
   doctorSkills,
   discoverSkillInstallHosts,
+  inspectSelectedSkillOwnership,
   isSkillInstallHostId,
   loadAgentProfileDigest,
   loadAgentProfiles,
@@ -928,6 +929,66 @@ test("selected named agents sharing one host path produce one owned physical wri
     installedTargets: [],
     unchangedTargets: [".agents/skills/shared-skill"],
   });
+});
+
+test("default required skill ownership supports each shared profile without rewriting noops", async () => {
+  const f = await fixture("shared-skill\n");
+  await writeFile(
+    path.join(f.schemaRoot, "required-skills.txt"),
+    "shared-skill\n",
+  );
+  await addSkill(f.sourceRoot, "shared-skill");
+  const request = {
+    projectRoot: f.projectRoot,
+    schemaRoot: f.schemaRoot,
+    profiles: [] as string[],
+  };
+  const defaults = await previewSkillInstall(request, f.options);
+  expect(defaults.targets).toHaveLength(1);
+  expect(
+    (await applySkillInstall(defaults, f.options)).installedTargets,
+  ).toEqual([".agents/skills/shared-skill"]);
+  const skillPath = path.join(
+    f.projectRoot,
+    ".agents/skills/shared-skill/SKILL.md",
+  );
+  const ownershipPath = path.join(
+    f.projectRoot,
+    ".openspec/opsx-schema/managed-resources.json",
+  );
+  const skillBefore = await stat(skillPath);
+  const ownershipBefore = await stat(ownershipPath);
+  const raw = await readFile(ownershipPath, "utf8");
+  for (const profile of ["opencode", "codex"]) {
+    const plan = await previewSkillInstall(
+      { ...request, profiles: [profile] },
+      f.options,
+    );
+    expect(plan.targets[0]?.action).toBe("noop");
+    expect(await inspectSelectedSkillOwnership(plan)).toBe(true);
+    expect(await applySkillInstall(plan, f.options)).toMatchObject({
+      applied: false,
+      installedTargets: [],
+      unchangedTargets: [".agents/skills/shared-skill"],
+    });
+    expect(await readFile(ownershipPath, "utf8")).toBe(raw);
+    const skillAfter = await stat(skillPath);
+    const ownershipAfter = await stat(ownershipPath);
+    expect([skillAfter.dev, skillAfter.ino, skillAfter.mtimeMs]).toEqual([
+      skillBefore.dev,
+      skillBefore.ino,
+      skillBefore.mtimeMs,
+    ]);
+    expect([
+      ownershipAfter.dev,
+      ownershipAfter.ino,
+      ownershipAfter.mtimeMs,
+    ]).toEqual([
+      ownershipBefore.dev,
+      ownershipBefore.ino,
+      ownershipBefore.mtimeMs,
+    ]);
+  }
 });
 
 test("unmanaged collision refuses the complete install before writing other skills", async () => {

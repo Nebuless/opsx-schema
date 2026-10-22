@@ -942,15 +942,15 @@ export async function defaultSkillProfiles(
       .length
   )
     return [...profiles];
-  const shared = (await loadAgentProfiles(manifestPath)).find(
+  const shared = (await loadAgentProfiles(manifestPath)).filter(
     (profile) => profile.target === ".agents/skills",
   );
-  if (!shared)
+  if (shared.length === 0)
     fail(
       "PROFILE_SELECTION_INVALID",
       "Required schema skills need a shared .agents/skills profile or explicit host selection.",
     );
-  return [shared.id];
+  return shared.map((profile) => profile.id);
 }
 
 interface LocalPinScan {

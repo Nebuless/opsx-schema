@@ -27,7 +27,7 @@ import {
 } from "../../src/cli/repin.ts";
 import { OpenSpecClient } from "../../src/openspec/client.ts";
 import { acquireProjectMutationLock } from "../../src/project-lock.ts";
-import { revisionRef } from "../../src/provenance/index.ts";
+import { recordCreation, revisionRef } from "../../src/provenance/index.ts";
 import {
   applySkillInstall,
   previewSkillInstall,
@@ -38,6 +38,11 @@ import {
   validateChangeAgainst,
 } from "../../src/validation/index.ts";
 import { linkedFixture } from "./portable-fixture.ts";
+import {
+  apply as applySwitch,
+  preview as previewSwitch,
+  readSelectionReceipt,
+} from "../../src/switch/index.ts";
 
 const roots: string[] = [];
 async function completeWorkflow(root: string, change: string) {
@@ -1390,6 +1395,122 @@ test("text CLI previews and reports refused options with nonzero status", async 
   );
   expect(await treeBytes(f.linked)).toEqual(before);
 });
+test(
+  "default install followed by OpenCode selection records ownership accepted by re-pin",
+  async () => {
+    const f = await linkedFixture(roots);
+    await rm(await changeDirectory(f.linked, f.change), { recursive: true });
+    const schemaRoot = path.join(f.linked, "openspec/schemas/portable");
+    const declaration = "fixture/skills\t.agents/skills/guard-skill\n";
+    await writeFile(path.join(schemaRoot, "skills.txt"), declaration);
+    await writeFile(path.join(schemaRoot, "required-skills.txt"), declaration);
+    execFileSync("git", ["add", "openspec/schemas/portable"], {
+      cwd: f.linked,
+    });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "--quiet",
+        "-m",
+        "required skill fixture",
+      ],
+      { cwd: f.linked },
+    );
+    const source = path.join(f.linked, "skill-source");
+    await mkdir(path.join(source, ".agents/skills/guard-skill"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(source, ".agents/skills/guard-skill/SKILL.md"),
+      "# Guard\n",
+    );
+    const options = { sourceRoots: { "fixture/skills": source } };
+    const defaults = await previewSkillInstall(
+      { projectRoot: f.linked, schemaRoot, profiles: [] },
+      options,
+    );
+    expect(
+      (await applySkillInstall(defaults, options)).installedTargets,
+    ).toEqual([".agents/skills/guard-skill"]);
+    const skill = path.join(f.linked, ".agents/skills/guard-skill/SKILL.md");
+    const ownership = path.join(
+      f.linked,
+      ".openspec/opsx-schema/managed-resources.json",
+    );
+    const before = await Promise.all([stat(skill), stat(ownership)]);
+    const raw = await readFile(ownership, "utf8");
+    const request = {
+      schema: "portable",
+      profiles: ["opencode"],
+      migrations: [],
+      skillBundle: "default" as const,
+    };
+    const preview = await previewSwitch(f.linked, request, options);
+    expect(preview.canApply, JSON.stringify(preview.diagnostics)).toBe(true);
+    expect(preview.profiles.targets.map((target) => target.action)).toEqual([
+      "noop",
+    ]);
+    const switched = await applySwitch(
+      f.linked,
+      request,
+      preview.token,
+      options,
+    );
+    expect(switched.status, JSON.stringify(switched)).toBe("applied");
+    expect(
+      switched.journal?.actions.filter(
+        (action) => action.kind === "skills.install",
+      ),
+    ).toEqual([]);
+    const association = await readSelectionReceipt(f.linked);
+    if (!association) throw new Error("Expected a recorded OpenCode selection");
+    expect(association.profiles).toEqual(["opencode"]);
+    const revision = await resolveRevision(
+      new OpenSpecClient(f.linked),
+      "portable",
+    );
+    await retainRevision(f.linked, revision);
+    const directory = path.join(f.linked, "openspec/changes", f.change);
+    await mkdir(directory);
+    await writeFile(
+      path.join(directory, ".openspec.yaml"),
+      "schema: portable\n",
+    );
+    await recordCreation(
+      f.linked,
+      f.change,
+      revisionRef(revision),
+      association,
+    );
+    await completeWorkflow(f.linked, f.change);
+    const review = await previewChangeRePin(
+      f.linked,
+      f.change,
+      "portable",
+      {
+        profiles: ["opencode"],
+        noProfiles: false,
+        skillHosts: [],
+        bundle: "default",
+      },
+      options,
+    );
+    expect(review.ok, JSON.stringify(review)).toBe(true);
+    expect(await readFile(skill, "utf8")).toBe("# Guard\n");
+    expect(await readFile(ownership, "utf8")).toBe(raw);
+    const after = await Promise.all([stat(skill), stat(ownership)]);
+    expect(after.map((info) => [info.dev, info.ino, info.mtimeMs])).toEqual(
+      before.map((info) => [info.dev, info.ino, info.mtimeMs]),
+    );
+  },
+  { timeout: 30_000 },
+);
+
 test("installed profile target permits a physical alias owner and rejects false ownership", async () => {
   const f = await linkedFixture(roots);
   await completeWorkflow(f.linked, f.change);
