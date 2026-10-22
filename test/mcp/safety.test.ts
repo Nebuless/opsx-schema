@@ -435,6 +435,76 @@ test("Pi excludes untrusted project extensions from the active global mode", asy
   });
 });
 
+test.each([
+  "{",
+  "null",
+  "[]",
+  "true",
+  '"settings"',
+  "42",
+])("Pi defers malformed project settings until trusted: %s", async (contents) => {
+  const data = await fixture();
+  const agentDir = path.join(data.root, "pi-agent");
+  await installMockPiAdapter(agentDir);
+  await mkdir(path.join(data.targetDir, ".pi"));
+  const settingsPath = path.join(data.targetDir, ".pi/settings.json");
+  await writeFile(settingsPath, contents);
+  const options = {
+    schemaDir: data.schemaDir,
+    targetDir: data.targetDir,
+    host: "pi" as const,
+    providerName: "inspo",
+  };
+  await withPiAgentDir(agentDir, async () => {
+    const legacy = await previewMcpInstall(options);
+    expect(legacy.installMode).toBe("config");
+    expect(legacy.configPath).toBe(path.join(data.targetDir, ".mcp.json"));
+    await withTTY(true, async () => {
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await writeFile(settingsPath, "{}");
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+      await writeFile(settingsPath, contents);
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: async () => {
+            await writeFile(
+              path.join(agentDir, "trust.json"),
+              JSON.stringify({ [data.targetDir]: true }),
+            );
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_CONFIG_CHANGED" });
+      const trusted = await previewMcpInstall(options);
+      expect(trusted.installMode).toBe("prerequisite-needed");
+      expect(trusted.diagnostic?.code).toBe("MCP_PI_ADAPTER_UNKNOWN");
+      let approvals = 0;
+      await expect(
+        installMcpProvider({
+          ...options,
+          approve: () => {
+            approvals++;
+            return true;
+          },
+        }),
+      ).rejects.toMatchObject({ code: "MCP_PI_ADAPTER_UNKNOWN" });
+      expect(approvals).toBe(0);
+    });
+    for (const configPath of [".mcp.json", ".pi/mcp.json"]) {
+      await expect(
+        readFile(path.join(data.targetDir, configPath)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+});
+
 test("Pi preserves the verified legacy adapter and its project trust guard", async () => {
   const original =
     JSON.stringify(
