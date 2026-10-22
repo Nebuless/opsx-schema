@@ -317,7 +317,12 @@ test(
   "required skill installation reports effective destinations and creation selection sources",
   async () => {
     for (const selection of [
-      { flags: [], profiles: ["codex"], hosts: [], destination: ".agents" },
+      {
+        flags: [],
+        profiles: ["codex", "opencode"],
+        hosts: [],
+        destination: ".agents",
+      },
       {
         flags: ["--profile", "claude-code"],
         profiles: ["claude-code"],
