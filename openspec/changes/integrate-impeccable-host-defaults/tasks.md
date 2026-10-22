@@ -11,6 +11,6 @@
 
 ## 3. Reviewed publication
 
-- [ ] 3.1 Publish only the scoped remote-main port and open the PR.
+- [x] 3.1 Publish only the scoped remote-main port and open the PR.
 - [ ] 3.2 Dispatch every Codex finding to subagents and repeat independent review until no findings remain.
 - [ ] 3.3 Resolve Macroscope feedback and verify current-head checks and merge readiness without merging.

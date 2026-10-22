@@ -76,7 +76,67 @@ or erase MCP files users independently installed after publication.
   1.12.0: Biome format/lint, Qlty, TypeScript, 510 application tests with
   9,635 assertions, two packed-distribution tests, and all resource checks.
   Application tests ran in 1,649.48 seconds. Qlty complexity and duplication
-  reports are advisory under repository policy. Current-head CI is pending
-  publication.
+  reports are advisory under repository policy. These results cover the initial
+  publication commit; review-fix verification is recorded below.
 - DOX pass updated root and schema ownership guidance. Other owning documents
   retain their existing scopes and contracts and require no changes.
+
+### PR review loop
+
+Publication commit `bed8bebc14b40eb3bbd90ba04515a5678aa2a584` is the scoped
+remote-main port. PR [#16](https://github.com/Nebuless/opsx-schema/pull/16)
+targets GitHub `main` and is linked to the owning T3 thread. Local integration
+commits remain separate. No remote merge was performed.
+
+Initial GitHub Codex and Macroscope review raised seven actionable findings:
+disabled Pi adapter registration, untrusted project inputs affecting global Pi
+mode, stale changelog version as runtime evidence, inaccurate skill destination
+reporting, default association mislabeled as switch provenance, stale built-in
+installation help, and required skills left behind after schema activation
+failure. Independent Codex review added an eighth distinct finding: Pi built-in
+exclusion precedence differed from the actual resolver. All eight were
+dispatched to three disjoint fixing subagents. Parent
+integration, regression evidence, current-head reruns, and fresh independent
+Codex review remain required before completion.
+
+The parent inspected all three fixes and committed verified units separately:
+`cb1ffb5` corrects effective Pi capability, trust, disabled registrations, and
+selector precedence; `737072e` corrects destination reporting, default selection
+provenance, and built-in help; `6f6756a` keeps schema activation inside the
+resource transaction and rolls back exact still-owned new writes on failure.
+Unsafe rollback preserves changed resources and reports `RESOURCE_PARTIAL`
+with installed targets, retained paths, ownership evidence, and the cause.
+The original review findings map to these three commits. Revert each commit to
+reverse its unit; reverting code does not undo previously installed resources.
+
+Focused verification passed: 17 MCP tests with 228 assertions, 25 CLI tests with
+291 assertions, and 48 transaction/resource/bundled tests with 502 assertions.
+Each unit passed standalone TypeScript, scoped Biome, and diff whitespace
+checks. The parent verified actual CLI help and strict change validation.
+LSP diagnostics could not run because the local mise shim has no configured
+`typescript-language-server`; standalone TypeScript passed instead.
+Normal Worktrunk pre-commit hooks were invoked and reported no configured hooks.
+The combined gate was superseded by the round 2 findings below.
+
+Round 2 rejected two reproduced cases on `6f6756a`: filtering a disabled trusted
+project registration before package identity precedence incorrectly revived the
+global adapter; the all-noop resource path ran dependent activation without the
+resource lock. Both findings were sent to the original disjoint fixing
+subagents. The superseded aggregate gate was intentionally stopped with SIGTERM
+before further edits; it is not a completed verification result. Seven other
+prior findings were confirmed addressed, including clean rollback and preserving
+external bytes, modes, ownership, replacements, and symlink routes. Round 2
+passed 56 focused tests with 460 assertions while reproducing both defects.
+
+Round 2 repairs are committed as `4b359db` (trusted disabled project package
+precedence) and `73b99cf` (resource lock and locked state validation for no-op
+activation). Parent inspection confirmed the corrected rejection-before-approval
+regression and callback lifetime checks. Focused verification passed 17 MCP
+tests with 237 assertions and 41 resource/schema-install tests with 239
+assertions. TypeScript, scoped Biome, and whitespace checks passed. The full
+integrated gate and fresh independent Codex round 3 now inspect `73b99cf`.
+
+T3 reported all five required GitHub checks passed on original publication head
+`bed8beb`: Commit history, Quality, Application tests, Resource checks, and
+Package distribution smoke. This does not cover the not-yet-pushed review fixes;
+the final published head must receive its own required checks.

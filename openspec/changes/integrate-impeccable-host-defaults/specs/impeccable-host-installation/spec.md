@@ -14,6 +14,17 @@ The installer SHALL install schema-declared required skills before reporting sch
 - **WHEN** a manifest, source, ownership record, or destination changes before Apply
 - **THEN** Apply refuses stale state without activating an unprepared default
 
+#### Scenario: Schema activation fails after skill installation
+- **GIVEN** Apply has installed new required skills and schema activation then fails
+- **WHEN** rollback can verify the exact new writes and ownership record
+- **THEN** rollback removes only those writes and restores prior ownership
+- **AND** external edits are preserved and reported as inspectable partial state when rollback is unsafe
+
+#### Scenario: Required skills are already installed
+- **GIVEN** every selected skill is a verified no-op
+- **WHEN** dependent schema activation runs
+- **THEN** the resource mutation lock is acquired and held through activation after locked state revalidation
+
 ### Requirement: Distinct native OmO destinations
 The installer SHALL keep OmO `.omo/skills` and `.omo/mcp.json` distinct from standalone Senpi `.senpi` targets.
 
@@ -35,7 +46,8 @@ Pi MCP setup MUST distinguish inspected native mode from a verified existing leg
 - **GIVEN** a verified installed adapter registered in effective project or global settings
 - **WHEN** provider installation is previewed
 - **THEN** the legacy `.mcp.json` target is retained
-- **AND** untrusted project extensions and disabled registrations do not shadow a verified global adapter
+- **AND** untrusted project extensions do not shadow a verified global adapter
+- **AND** a trusted disabled project registration shadows the same global package without reviving its adapter
 
 #### Scenario: Ambiguous or changed host
 - **GIVEN** unknown mode, conflicting active extensions, missing trust for a project-local target, or host evidence changed after preview
