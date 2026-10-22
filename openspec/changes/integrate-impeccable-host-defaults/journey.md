@@ -282,3 +282,28 @@ exceed its low-risk eligibility threshold. It names no remaining code defect or
 ownership concern. This is a human merge-approval requirement, not a failing
 correctness check; no automatic approval is claimed or bypassed. Final local
 aggregate and current-head Application tests remain pending.
+
+GitHub subsequently completed all five required checks successfully on
+`ae1b5c75ced415ed5aede0743434ccf2189986f9`: Commit history, Quality,
+Application tests, Resource checks, and Package distribution smoke. The PR is
+open, `CLEAN`, and `MERGEABLE`, with Macroscope correctness successful and no
+unresolved review threads. The only unpublished commit is the documentation-only
+loader evidence `ca76bdb`. The local complete aggregate remains pending; no
+remote merge or main push has occurred.
+
+The final aggregate `bun run check` completed with exit 0: 534 application tests
+across 31 files, two packed-distribution tests, Biome formatting/lint, pinned
+Qlty 0.651.0, TypeScript, resource checks, and all nine native OpenSpec schema
+validations. Refusal-path shell diagnostics were expected assertions, not failed
+tests. Strict change validation and whitespace checks passed separately. The
+aggregate covers the final runtime state; subsequent changes are evidence-only
+OpenSpec records. DOX contracts remain unchanged because neither host behavior
+nor ownership changed during the disproven-finding investigation.
+
+Final local-integration audit reconfirmed primary `main` at
+`ec023d5326593f7cd9dc6fd95d8a348069267cad`, with original implementation
+`737f2e4` and completion `ec023d5` as ancestors. Unrelated primary `AGENTS.md`
+changes and local `.omo` runtime state remain untouched. The publication port and
+review repairs remain on their remote-main-based Worktrunk branch; no remote
+main push or PR merge occurred. Live MCP connectivity remains outside the proof:
+the exact native config reader was exercised without spawning provider servers.
