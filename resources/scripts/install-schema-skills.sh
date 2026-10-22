@@ -281,9 +281,9 @@ clone_repo() {
 	fi
 	if [ "$2" != HEAD ]; then
 		HOME="$TMP/git-home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 git -C "$_dir" fetch --depth 1 origin "$2" || die "failed to fetch reviewed revision: $1@$2"
-		git -C "$_dir" checkout --detach "$2" || die "failed to select reviewed revision: $1@$2"
+		HOME="$TMP/git-home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 git -C "$_dir" checkout --detach "$2" || die "failed to select reviewed revision: $1@$2"
 	fi
-	_revision=$(git -C "$_dir" rev-parse HEAD 2>/dev/null) || die "failed to resolve cloned source revision: $1"
+	_revision=$(HOME="$TMP/git-home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 git -C "$_dir" rev-parse HEAD 2>/dev/null) || die "failed to resolve cloned source revision: $1"
 	info "cloned https://github.com/$1 at $_revision"
 	printf '%s%s%s\n' "$1@$2" "$TAB" "$_dir" >>"$REPOS"
 	CLONED_REPO_DIR=$_dir
